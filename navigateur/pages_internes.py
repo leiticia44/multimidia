@@ -3,7 +3,7 @@ pages générées (erreurs, texte brut, source, images, téléchargements)."""
 
 import time
 
-from .reseau import pourcent_encoder
+from .reseau import pourcent_decoder, pourcent_encoder
 
 MOTEUR_RECHERCHE = "https://lite.duckduckgo.com/lite/"   # moteur sans Google
 PAGE_ACCUEIL = "about:accueil"
@@ -51,7 +51,10 @@ def accueil(stockage):
 <ul>%s</ul>
 <h2>Raccourcis</h2>
 <p><a href="about:historique">Historique</a> &middot; <a href="about:favoris">Gérer les favoris</a>
+&middot; <a href="about:annotations">Mes annotations</a>
 &middot; <a href="about:aide">Aide et raccourcis clavier</a></p>
+<p class=discret>Outils inspirés de HyWebMap : carte de navigation (Ctrl+M), annotations (Ctrl+N),
+analyse de la page et liens rompus (Ctrl+I).</p>
 """ % (MOTEUR_RECHERCHE, favoris)
     return _page("Accueil", contenu)
 
@@ -76,6 +79,32 @@ def favoris(stockage):
     return _page("Favoris", contenu)
 
 
+def annotations(stockage, chemin):
+    reseau = stockage.reseau
+    requete = ""
+    if "?q=" in chemin:
+        requete = pourcent_decoder(chemin.split("?q=", 1)[1].split("&")[0], plus_en_espace=True)
+    liste = reseau.chercher_annotations(requete) if requete else reseau.annotations
+    blocs = []
+    for a in reversed(liste):
+        bloc = '<div class=carte><p><b>n° %d</b> &mdash; <a href="%s">%s</a> <span class=discret>%s</span></p>' % (
+            a["numero"], echapper(a["url"]), echapper(a["titre"] or a["url"]), echapper(a["date"]))
+        if a["note"]:
+            bloc += "<p>%s</p>" % echapper(a["note"])
+        if a["passage"]:
+            bloc += "<blockquote><i>&laquo; %s &raquo;</i></blockquote>" % echapper(a["passage"])
+        if a["mots_cles"]:
+            bloc += "<p class=discret>Mots-clés : %s</p>" % echapper(", ".join(a["mots_cles"]))
+        bloc += '<p class=discret>[<a href="about:annotations?supprimer=%d">supprimer</a>]</p></div>' % a["numero"]
+        blocs.append(bloc)
+    contenu = """<h1>Mes annotations</h1>
+<form action="about:annotations" method=get><input name=q size=40 value="%s" placeholder="Chercher dans les notes, passages, mots-clés">
+<input type=submit value="Chercher"></form>
+<p class=discret>Sélectionnez un passage à la souris puis Ctrl+N pour annoter une page.</p>%s""" % (
+        echapper(requete), "".join(blocs) or "<p class=discret>Aucune annotation.</p>")
+    return _page("Annotations", contenu)
+
+
 def aide():
     raccourcis = [
         ("Ctrl+L / F6", "Aller à la barre d'adresse"), ("Ctrl+T", "Nouvel onglet"),
@@ -86,6 +115,10 @@ def aide():
         ("Ctrl+ + / Ctrl+ - / Ctrl+0", "Zoom avant / arrière / réinitialiser"),
         ("Espace / Page suivante", "Défiler d'un écran"), ("Début / Fin", "Haut / bas de la page"),
         ("Clic milieu ou Ctrl+clic", "Ouvrir le lien dans un nouvel onglet"),
+        ("Glisser la souris / Ctrl+C", "Sélectionner du texte / le copier"),
+        ("Ctrl+M", "Carte de navigation (réseau personnel)"),
+        ("Ctrl+N", "Annoter la sélection ou la page"),
+        ("Ctrl+I", "Analyse de la page et liens rompus"),
     ]
     lignes = "".join("<tr><td><kbd>%s</kbd></td><td>%s</td></tr>" % (echapper(t), echapper(d)) for t, d in raccourcis)
     contenu = """<h1>Aide</h1>
@@ -99,6 +132,9 @@ def aide():
 <li>Mise en page : blocs, texte avec retour à la ligne, listes, tableaux, images PNG/GIF.</li>
 <li>Formulaires GET/POST : champs texte, cases à cocher, boutons radio, listes, zones de texte.</li>
 <li>Onglets, historique, favoris, zoom, recherche dans la page, code source.</li>
+<li>Outils inspirés de HyWebMap (Saleh, Papy, Bouhaï, Paris 8) : carte de navigation avec liens
+personnels, annotations resurlignées à chaque visite, profil de page, détection des liens rompus,
+surveillance des pages du réseau, navigation par date et export du réseau en site HTML.</li>
 </ul>
 <p class=discret>JavaScript n'est pas exécuté : les pages s'affichent comme avec JavaScript désactivé.</p>
 """ % lignes
@@ -146,6 +182,8 @@ def generer(chemin, stockage):
         return favoris(stockage)
     if nom in ("aide", "help"):
         return aide()
+    if nom == "annotations":
+        return annotations(stockage, chemin)
     if nom == "blank":
         return "<html><head><title>Nouvel onglet</title></head><body></body></html>"
     return erreur("about:" + chemin, "Page interne inconnue")

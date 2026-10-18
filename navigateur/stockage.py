@@ -4,6 +4,8 @@ import json
 import os
 import time
 
+from .reseau_personnel import ReseauPersonnel
+
 DOSSIER = os.path.join(os.path.expanduser("~"), ".navigateur_maison")
 MAX_HISTORIQUE = 2000
 
@@ -13,6 +15,7 @@ class Stockage:
         self.dossier = dossier
         self.historique = self._lire("historique.json", [])
         self.favoris = self._lire("favoris.json", [])
+        self.reseau = ReseauPersonnel(dossier)   # carte de navigation et annotations
 
     def _chemin(self, nom):
         return os.path.join(self.dossier, nom)

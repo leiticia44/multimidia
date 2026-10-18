@@ -42,6 +42,31 @@ Le fichier `exemples/demo.html` montre tout ce que le moteur sait afficher.
 
 Le moteur de recherche par défaut est **DuckDuckGo**, pas Google.
 
+## Outils inspirés de HyWebMap
+
+Nous nous sommes appuyés sur l'article de **Saleh, Papy et Bouhaï, « HyWebMap : un outil
+d'agrégation, d'organisation et de veille technologique pour le Web »** (ISKO 2001,
+laboratoire Paragraphe, Université Paris 8). L'article part d'un constat : la navigation
+hypertexte provoque de la **désorientation** et une **surcharge cognitive**. Un historique
+en liste et des favoris rangés en dossiers ne suffisent pas pour s'y retrouver. Nous avons
+donc ajouté au navigateur plusieurs de ses propositions.
+
+| Idée de l'article | Dans le navigateur |
+|---|---|
+| **Carte du réseau** (« réseau virtuel ») pour savoir *où je suis* | **Carte de navigation** (`Ctrl+M`) : chaque page visitée est un nœud, chaque lien suivi une flèche nommée par le texte du lien. Les pages sont rangées en colonnes selon leur profondeur, la page courante et le nœud racine sont mis en évidence. Un clic ouvre la page. |
+| **Liens personnels** ajoutés par le lecteur, sans modifier les sites d'origine | Clic droit sur un nœud › « Créer un lien personnel », puis clic sur la destination et choix d'un nom (« explique », « contredit »…). Ces liens sont dessinés en pointillés rouges, comme dans HyWebMap. |
+| **Typologie des nœuds** (racine, parent, fils, orphelin) | Affichée au clic droit sur un nœud et dans l'analyse de la page. Le nœud racine peut être changé. |
+| **Agents de surveillance** des pages du réseau | Bouton « Vérifier les nœuds » : chaque page est testée (requête `HEAD`) et celles qui ont disparu sont grisées. |
+| **Liens obsolètes ou rompus** | Fenêtre *Analyse* (`Ctrl+I`), onglet *Liens* : tous les liens de la page sont classés (interne, externe, ancre) et testés en parallèle (ok, rompu 404, injoignable). |
+| **Profil d'une page** (caractères, images, liens internes et externes, scripts…) | Onglet *Profil* de l'analyse, avec aussi le titre, l'auteur et les mots-clés des balises `<meta>`. |
+| **Annotations** : un passage, une note, des mots-clés, une date, un numéro | On sélectionne du texte à la souris (`Ctrl+C` copie), puis `Ctrl+N`. À chaque nouvelle visite, les passages annotés sont **resurlignés en vert**. Si la page a changé et que le passage n'existe plus, l'annotation est signalée comme introuvable. Toutes les annotations sont consultables et cherchables dans `about:annotations`. |
+| **Navigation par date** | Dans la carte, filtre des pages visitées entre deux dates, sans doublons. |
+| **Génération d'un site HTML** à partir du réseau | Menu ☰ › « Exporter mon réseau en site HTML » : un sommaire en arbre et une fiche par page (liens, type de nœud, annotations), lisible par n'importe quel navigateur. |
+
+Comme le disent les auteurs en citant Pierre Lévy, ces outils font du **lecteur un auteur** :
+en nommant les liens, en ajoutant les siens et en annotant, il construit sa propre structure
+hypertextuelle par-dessus le Web. Tout reste sur l'ordinateur, dans `~/.navigateur_maison/reseau.json`.
+
 ### Raccourcis clavier
 
 | Touches | Action |
@@ -57,6 +82,10 @@ Le moteur de recherche par défaut est **DuckDuckGo**, pas Google.
 | `Ctrl+U` | Code source |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` | Zoom |
 | Clic milieu ou `Ctrl+clic` | Ouvrir le lien dans un nouvel onglet |
+| Glisser la souris / `Ctrl+C` | Sélectionner du texte / le copier |
+| `Ctrl+M` | Carte de navigation |
+| `Ctrl+N` | Annoter la sélection ou la page |
+| `Ctrl+I` | Analyse de la page et liens rompus |
 
 ## Architecture
 
@@ -77,8 +106,10 @@ Une page passe par les mêmes étapes que dans un vrai navigateur :
 | `navigateur/mise_en_page.py` | Calcul de la position de chaque boîte, puis liste de commandes de dessin |
 | `navigateur/chargeur.py` | Charge une page complète : document, feuilles CSS et images |
 | `navigateur/interface.py` | Fenêtre, onglets, événements souris et clavier, dessin |
-| `navigateur/pages_internes.py` | Pages `about:accueil`, `about:historique`, `about:favoris`, `about:aide`, pages d'erreur |
+| `navigateur/pages_internes.py` | Pages `about:accueil`, `about:historique`, `about:favoris`, `about:annotations`, `about:aide`, pages d'erreur |
 | `navigateur/stockage.py` | Enregistrement de l'historique et des favoris (JSON dans `~/.navigateur_maison/`) |
+| `navigateur/reseau_personnel.py` | Réseau personnel (graphe des pages, liens personnels), annotations, export HTML, profil de page et liens d'une page |
+| `navigateur/hywebmap.py` | Fenêtres de la carte de navigation, de l'analyse de page et des annotations |
 
 La mise en page ne dépend pas de Tkinter : elle reçoit un objet qui mesure le texte.
 Grâce à ça, on peut la tester sans écran (avec une police factice dans les tests).
@@ -89,10 +120,11 @@ Grâce à ça, on peut la tester sans écran (avec une police factice dans les t
 python3 -m unittest discover -s tests -v
 ```
 
-Les 34 tests vérifient les URL, le protocole HTTP (sur un petit serveur local :
+Les 38 tests vérifient les URL, le protocole HTTP (sur un petit serveur local :
 redirections, chunked, gzip, cookies, POST), l'analyse HTML, la cascade CSS, la
-mise en page (retour à la ligne, centrage, tableaux, listes, formulaires) et le
-stockage. Ils n'ont besoin ni d'écran ni d'Internet.
+mise en page (retour à la ligne, centrage, tableaux, listes, formulaires), le
+stockage et les outils HyWebMap (graphe de navigation, typologie des nœuds,
+annotations, export, profil de page, classement des liens). Ils n'ont besoin ni d'écran ni d'Internet.
 
 ## Limites connues
 

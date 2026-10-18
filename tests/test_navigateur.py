@@ -355,6 +355,72 @@ class TestPagesInternes(unittest.TestCase):
         self.assertIn("duckduckgo", formulaire.attributs["action"])
         self.assertNotIn("google", formulaire.attributs["action"])
 
+    def test_annotations(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            stockage = Stockage(dossier)
+            stockage.reseau.annoter("https://a.fr/", "Page A", "un passage", "Ma note", "hypertexte")
+            page = charger_page(ClientHTTP(), URL("about:annotations?q=hypertexte"), stockage=stockage)
+            vide = charger_page(ClientHTTP(), URL("about:annotations?q=introuvable"), stockage=stockage)
+        texte = page.dom.texte_contenu()
+        self.assertIn("Ma note", texte)
+        self.assertNotIn("Ma note", vide.dom.texte_contenu())
+
+
+class TestHyWebMap(unittest.TestCase):
+    """Réseau personnel de navigation, annotations et analyse de page."""
+
+    def test_graphe_de_navigation(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            reseau = Stockage(dossier).reseau
+            reseau.visite("https://a.fr/", "A")
+            reseau.visite("https://a.fr/b", "B", depuis="https://a.fr/", texte_lien="vers B")
+            reseau.visite("https://a.fr/c", "C", depuis="https://a.fr/b", texte_lien="vers C", code_http=404)
+            reseau.visite("https://a.fr/b", "B", depuis="https://a.fr/", texte_lien="vers B")
+            reseau.ajouter_lien_perso("https://a.fr/c", "https://a.fr/", "contredit")
+            relu = Stockage(dossier).reseau          # relu depuis le disque
+        self.assertEqual(relu.racine, "https://a.fr/")
+        self.assertEqual(relu.noeuds["https://a.fr/b"]["visites"], 2)
+        self.assertEqual(relu.noeuds["https://a.fr/c"]["niveau"], 2)
+        self.assertEqual(relu.noeuds["https://a.fr/c"]["statut"], "rompu")
+        self.assertEqual(len([l for l in relu.liens if not l["perso"]]), 2)   # pas de doublon
+        self.assertEqual(relu.type_noeud("https://a.fr/"), "racine")
+        self.assertEqual(relu.type_noeud("https://a.fr/b"), "parent")
+        perso = [l for l in relu.liens if l["perso"]]
+        self.assertEqual((perso[0]["nom"], perso[0]["vers"]), ("contredit", "https://a.fr/"))
+
+    def test_annotations_et_export(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            reseau = Stockage(dossier).reseau
+            reseau.visite("https://a.fr/", "Accueil A")
+            reseau.annoter("https://a.fr/#section", "Accueil A", " la désorientation ", "Idée clé", "hypertexte, carte")
+            self.assertEqual(len(reseau.annotations_de("https://a.fr/")), 1)
+            self.assertEqual(reseau.chercher_annotations("CARTE")[0]["mots_cles"], ["hypertexte", "carte"])
+            chemin = reseau.exporter_html(os.path.join(dossier, "reseau.html"))
+            with open(chemin, encoding="utf-8") as fichier:
+                html = fichier.read()
+            reseau.supprimer_annotation(1)
+            self.assertEqual(reseau.annotations, [])
+        self.assertIn("Accueil A", html)
+        self.assertIn("Idée clé", html)
+
+    def test_profil_et_liens(self):
+        from navigateur.reseau_personnel import liens_page, profil_page
+        html = ('<html><head><title>T</title><meta name="author" content="Leiticia"></head><body>'
+                '<a href="/b">B</a> <a href="https://ailleurs.fr/">X</a> <a href="#haut">H</a> <a href="/b">B</a>'
+                '<img src="i.png"><script>var a;</script></body></html>')
+        with tempfile.TemporaryDirectory() as dossier:
+            chemin = os.path.join(dossier, "p.html")
+            with open(chemin, "w", encoding="utf-8") as fichier:
+                fichier.write(html)
+            url = URL("file://" + chemin)
+            page = charger_page(ClientHTTP(), url)
+        liens = liens_page(page, page.url)
+        self.assertEqual([genre for _, _, genre in liens], ["interne", "externe", "ancre"])
+        profil = dict(profil_page(page, page.url))
+        self.assertEqual(profil["Auteur (meta)"], "Leiticia")
+        self.assertEqual((profil["Nombre d'images"], profil["Nombre de scripts"]), (1, 1))
+        self.assertEqual(profil["Nombre de liens externes"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,7 +9,7 @@ import threading
 import tkinter as tk
 import tkinter.font as tkfont
 
-from . import pages_internes
+from . import hywebmap, pages_internes
 from .analyseur_html import Element, ancetre, parcourir
 from .chargeur import charger_page, construire_page, format_image
 from .mise_en_page import (CmdImage, CmdLigne, CmdOvale, CmdRect, CmdTexte, Contexte, LayoutDocument,
@@ -130,6 +130,10 @@ def interpreter_saisie(texte):
     return pages_internes.url_recherche(texte)
 
 
+def _normaliser(mot):
+    return "".join(c for c in mot.lower() if c.isalnum())
+
+
 # ---------------------------------------------------------------------------
 # Onglet
 # ---------------------------------------------------------------------------
@@ -154,6 +158,10 @@ class Onglet:
         self.zoom = 1.0
         self.fond = "#ffffff"
         self.erreur = None
+        self.origine = None         # (page de départ, texte du lien) pour la carte de navigation
+        self.mots = []              # CmdTexte dans l'ordre du document (sélection, annotations)
+        self.annotes = {}           # id(CmdTexte) -> numéro de l'annotation qui le surligne
+        self.reperes = {}           # id(CmdTexte) -> numéro, sur le premier mot de chaque passage
 
     # -- navigation ---------------------------------------------------------
 
@@ -188,6 +196,12 @@ class Onglet:
         if chemin.startswith("historique?effacer"):
             self.nav.stockage.effacer_historique()
             self.naviguer("about:historique", ajouter=False)
+            return True
+        if chemin.startswith("annotations?supprimer="):
+            numero = chemin.split("=", 1)[1]
+            if numero.isdigit():
+                self.nav.stockage.reseau.supprimer_annotation(int(numero))
+            self.naviguer("about:annotations", ajouter=False)
             return True
         if chemin.startswith("favoris?supprimer="):
             self.nav.stockage.supprimer_favori(pourcent_decoder(chemin.split("=", 1)[1]))
@@ -246,6 +260,11 @@ class Onglet:
         if self.url.fragment:
             self.aller_ancre(self.url.fragment)
         self.nav.stockage.ajouter_historique(str(self.url), self.titre)
+        depuis, texte_lien = self.origine or (None, None)
+        self.origine = None
+        self.nav.stockage.reseau.visite(str(self.url.sans_fragment()), self.titre, depuis, texte_lien,
+                                        getattr(resultat, "statut", 200) or 200)
+        self.nav.rafraichir_carte()
         self.nav.mettre_a_jour()
 
     def _afficher_html(self, html, adresse, garder_url=False):
@@ -302,6 +321,36 @@ class Onglet:
             return
         self.contexte.champ_actif = self.champ_actif
         self.commandes, self.zones = self.document.peindre()
+        self.mots = [c for c in self.commandes if isinstance(c, CmdTexte)]
+        self.reperer_annotations()
+
+    def reperer_annotations(self):
+        """Retrouve dans la page les passages annotés pour les surligner (HyWebMap).
+        Si la page a changé et que le passage n'existe plus, l'annotation est marquée introuvable."""
+        self.annotes, self.reperes = {}, {}
+        if self.url is None or self.url.schema not in ("http", "https", "file"):
+            return
+        # Texte de la page sans espaces ni ponctuation, et pour chaque caractère le mot d'origine :
+        # la recherche du passage ne dépend donc pas du découpage des mots à l'affichage.
+        texte, proprietaire = [], []
+        for k, commande in enumerate(self.mots):
+            morceau = _normaliser(commande.texte)
+            texte.append(morceau)
+            proprietaire.extend([k] * len(morceau))
+        texte = "".join(texte)
+        for annotation in self.nav.stockage.reseau.annotations_de(str(self.url.sans_fragment())):
+            cible = _normaliser(annotation["passage"])
+            annotation["introuvable"] = False
+            if not cible:
+                continue
+            position = texte.find(cible)
+            if position == -1:
+                annotation["introuvable"] = True
+                continue
+            debut, fin = proprietaire[position], proprietaire[position + len(cible) - 1]
+            for commande in self.mots[debut:fin + 1]:
+                self.annotes[id(commande)] = annotation["numero"]
+            self.reperes[id(self.mots[debut])] = annotation["numero"]
 
     def hauteur_max(self):
         if self.document is None:
@@ -363,6 +412,7 @@ class Onglet:
             self.naviguer(cible, corps=donnees, referent=self.url)
         else:
             adresse = str(cible.sans_fragment()).split("?")[0] + "?" + donnees
+            self.origine = (str(self.url.sans_fragment()), "formulaire")
             self.naviguer(adresse, referent=self.url)
 
     def activer_champ(self, noeud, x_ecran, y_ecran):
@@ -487,6 +537,9 @@ class Navigateur:
         self.index_correspondance = -1
         self._largeur_precedente = None
         self._relayout_prevu = None
+        self.fenetre_carte = None
+        self.selection = None        # (début, fin) : indices dans actif.mots
+        self._depart_selection = None
 
         self._construire_interface()
         self._raccourcis()
@@ -554,6 +607,7 @@ class Navigateur:
 
         self.canevas.bind("<Configure>", self._redimensionnement)
         self.canevas.bind("<Button-1>", self._clic)
+        self.canevas.bind("<B1-Motion>", self._glisser)
         self.canevas.bind("<Button-2>", lambda e: self._clic(e, nouvel_onglet=True))
         self.canevas.bind("<Button-3>", self._menu_contextuel)
         self.canevas.bind("<Motion>", self._survol)
@@ -584,11 +638,16 @@ class Navigateur:
         r.bind_all("<Control-minus>", lambda e: self.zoomer(-1))
         r.bind_all("<Control-KP_Subtract>", lambda e: self.zoomer(-1))
         r.bind_all("<Control-0>", lambda e: self.zoomer(0))
+        r.bind_all("<Control-m>", lambda e: self.ouvrir_carte())
+        r.bind_all("<Control-n>", lambda e: self.annoter())
+        r.bind_all("<Control-i>", lambda e: self.analyser_page())
+        r.bind_all("<Control-c>", self._copier)
 
     # -- onglets ---------------------------------------------------------------
 
-    def nouvel_onglet(self, adresse=None, activer=True, referent=None):
+    def nouvel_onglet(self, adresse=None, activer=True, referent=None, origine=None):
         onglet = Onglet(self)
+        onglet.origine = origine
         position = self.onglets.index(self.actif) + 1 if self.actif in self.onglets else len(self.onglets)
         self.onglets.insert(position, onglet)
         if activer or self.actif is None:
@@ -616,6 +675,7 @@ class Navigateur:
 
     def activer(self, onglet):
         self.actif = onglet
+        self.selection = None
         self._relayout_si_necessaire()
         self.mettre_a_jour()
 
@@ -693,11 +753,23 @@ class Navigateur:
         bas = haut + hauteur
         polices = self.polices
         surlignes = set(id(c) for c in self.correspondances)
+        selectionnes = set()
+        if self.selection is not None:
+            debut, fin = self.selection
+            selectionnes = set(id(c) for c in onglet.mots[debut:fin + 1])
         courante = self.correspondances[self.index_correspondance] if 0 <= self.index_correspondance < len(self.correspondances) else None
         for commande in onglet.commandes:
             if commande.bas < haut or commande.haut > bas:
                 continue
             if isinstance(commande, CmdTexte):
+                if id(commande) in onglet.annotes:
+                    canevas.create_rectangle(commande.x - 1, commande.y - haut, commande.x + commande.largeur + 1,
+                                             commande.bas - haut, fill="#c8f0c8", outline="")
+                if id(commande) in onglet.reperes:   # trait vert dans la marge : début d'un passage annoté
+                    canevas.create_rectangle(1, commande.y - haut, 4, commande.bas - haut, fill="#2e7d32", outline="")
+                if id(commande) in selectionnes:
+                    canevas.create_rectangle(commande.x - 1, commande.y - haut, commande.x + commande.largeur + 1,
+                                             commande.bas - haut, fill="#b9d4ff", outline="")
                 if id(commande) in surlignes:
                     canevas.create_rectangle(commande.x - 1, commande.y - haut, commande.x + commande.largeur + 1,
                                              commande.bas - haut, fill="#ff9632" if commande is courante else "#ffff00",
@@ -802,6 +874,10 @@ class Navigateur:
         self.canevas.focus_set()
         onglet = self.actif
         zone = self._zone_a(evenement.x, evenement.y)
+        if self.selection is not None:
+            self.effacer_selection()
+            self.dessiner()
+        self._depart_selection = (evenement.x, evenement.y) if zone is None else None
         if onglet.champ_actif is not None and (zone is None or zone.noeud is not onglet.champ_actif):
             onglet.champ_actif = None
             onglet.peindre()
@@ -822,9 +898,12 @@ class Navigateur:
         except ValueError:
             self._etat("Lien non pris en charge : %s" % href)
             return
+        origine = (str(onglet.url.sans_fragment()), " ".join(lien.texte_contenu().split())[:60]) \
+            if onglet.url is not None else None
         if nouvel_onglet or lien.attributs.get("target", "").lower() == "_blank":
-            self.nouvel_onglet(str(cible), activer=not nouvel_onglet, referent=onglet.url)
+            self.nouvel_onglet(str(cible), activer=not nouvel_onglet, referent=onglet.url, origine=origine)
         else:
+            onglet.origine = origine
             onglet.naviguer(cible, referent=onglet.url)
 
     def _survol(self, evenement):
@@ -871,11 +950,17 @@ class Navigateur:
             menu.add_command(label="Ouvrir le lien dans un nouvel onglet", command=lambda: self.suivre_lien(zone.noeud, True))
             menu.add_command(label="Copier l'adresse du lien", command=lambda: self._copier_lien(zone.noeud))
             menu.add_separator()
+        if self.selection is not None:
+            menu.add_command(label="Copier", command=self._copier)
+            menu.add_command(label="Annoter ce passage…", command=self.annoter)
+            menu.add_separator()
         menu.add_command(label="Précédent", command=self.actif.precedent)
         menu.add_command(label="Suivant", command=self.actif.suivant)
         menu.add_command(label="Recharger", command=self.actif.recharger)
         menu.add_separator()
         menu.add_command(label="Code source de la page", command=self.voir_source)
+        menu.add_command(label="Annoter cette page…", command=self.annoter)
+        menu.add_command(label="Analyse de la page et liens rompus", command=self.analyser_page)
         menu.tk_popup(evenement.x_root, evenement.y_root)
 
     def _copier_lien(self, lien):
@@ -898,6 +983,12 @@ class Navigateur:
         menu.add_command(label="Zoom avant\tCtrl++", command=lambda: self.zoomer(1))
         menu.add_command(label="Zoom arrière\tCtrl+-", command=lambda: self.zoomer(-1))
         menu.add_command(label="Taille réelle\tCtrl+0", command=lambda: self.zoomer(0))
+        menu.add_separator()
+        menu.add_command(label="Carte de navigation\tCtrl+M", command=self.ouvrir_carte)
+        menu.add_command(label="Annoter la page / la sélection\tCtrl+N", command=self.annoter)
+        menu.add_command(label="Mes annotations", command=lambda: self.nouvel_onglet("about:annotations"))
+        menu.add_command(label="Analyse de la page et liens rompus\tCtrl+I", command=self.analyser_page)
+        menu.add_command(label="Exporter mon réseau en site HTML…", command=lambda: hywebmap.exporter_reseau(self))
         menu.add_separator()
         menu.add_command(label="Aide", command=lambda: self.nouvel_onglet("about:aide"))
         menu.add_command(label="Quitter", command=self.racine.destroy)
@@ -970,6 +1061,91 @@ class Navigateur:
             onglet.borner_defilement()
         self.compteur_recherche.configure(text="%d / %d" % (self.index_correspondance + 1, len(self.correspondances)))
         self.dessiner()
+
+    # -- sélection de texte et outils HyWebMap --------------------------------
+
+    def _mot_proche(self, x, y):
+        """Indice du mot (CmdTexte) le plus proche du point (coordonnées écran)."""
+        onglet = self.actif
+        y_doc = y + onglet.defilement
+        meilleur, distance = None, None
+        for k, c in enumerate(onglet.mots):
+            dy = 0 if c.haut <= y_doc <= c.bas else min(abs(y_doc - c.haut), abs(y_doc - c.bas))
+            dx = 0 if c.x <= x <= c.x + c.largeur else min(abs(x - c.x), abs(x - c.x - c.largeur))
+            d = dy * 10 + dx
+            if distance is None or d < distance:
+                meilleur, distance = k, d
+        return meilleur
+
+    def _glisser(self, evenement):
+        if self._depart_selection is None or not self.actif.mots:
+            return
+        x0, y0 = self._depart_selection
+        if abs(evenement.x - x0) + abs(evenement.y - y0) < 5:
+            return
+        hauteur = self.canevas.winfo_height()
+        if evenement.y > hauteur - 10:
+            self.defiler(PAS_DEFILEMENT // 3)
+        elif evenement.y < 10:
+            self.defiler(-PAS_DEFILEMENT // 3)
+        debut, fin = self._mot_proche(x0, y0), self._mot_proche(evenement.x, evenement.y)
+        self.selection = (min(debut, fin), max(debut, fin))
+        self._etat("%d mot(s) sélectionné(s) — Ctrl+C pour copier, Ctrl+N pour annoter"
+                   % (self.selection[1] - self.selection[0] + 1))
+        self.dessiner()
+
+    def texte_selection(self):
+        if self.selection is None:
+            return ""
+        debut, fin = self.selection
+        morceaux, precedent = [], None
+        for c in self.actif.mots[debut:fin + 1]:
+            if precedent is not None and not precedent.texte.endswith(" ") and (
+                    abs(c.y - precedent.y) > 2 or c.x > precedent.x + precedent.largeur + 1):
+                morceaux.append(" ")     # changement de ligne ou espace entre deux styles
+            morceaux.append(c.texte)
+            precedent = c
+        return " ".join("".join(morceaux).split())
+
+    def effacer_selection(self):
+        self.selection = None
+
+    def _copier(self, evenement=None):
+        if evenement is not None and isinstance(evenement.widget, tk.Entry):
+            return None
+        if self.selection is not None:
+            self.racine.clipboard_clear()
+            self.racine.clipboard_append(self.texte_selection())
+            self._etat("Copié dans le presse-papiers.")
+            return "break"
+        return None
+
+    def annoter(self):
+        onglet = self.actif
+        if onglet.url is None or onglet.url.schema not in ("http", "https", "file") or onglet.erreur:
+            self._etat("Ouvrez d'abord une page du Web pour l'annoter.")
+            return "break"
+        hywebmap.FenetreAnnotation(self, onglet, self.texte_selection())
+        return "break"
+
+    def ouvrir_carte(self):
+        if self.fenetre_carte is not None and self.fenetre_carte.existe():
+            self.fenetre_carte.fenetre.lift()
+            self.fenetre_carte.redessiner()
+        else:
+            self.fenetre_carte = hywebmap.FenetreCarte(self)
+        return "break"
+
+    def rafraichir_carte(self):
+        if self.fenetre_carte is not None and self.fenetre_carte.existe():
+            self.fenetre_carte.redessiner()
+
+    def analyser_page(self):
+        onglet = self.actif
+        if onglet.page is None or onglet.url is None:
+            return "break"
+        self._fenetre_analyse = hywebmap.FenetreAnalyse(self, onglet)
+        return "break"
 
     def lancer(self):
         self.racine.mainloop()
