@@ -618,30 +618,40 @@ class Navigateur:
 
     def _raccourcis(self):
         r = self.racine
-        r.bind_all("<Control-l>", lambda e: self._focus_adresse())
-        r.bind_all("<F6>", lambda e: self._focus_adresse())
-        r.bind_all("<Control-t>", lambda e: self.nouvel_onglet(pages_internes.PAGE_ACCUEIL))
-        r.bind_all("<Control-w>", lambda e: self.fermer_onglet(self.actif))
-        r.bind_all("<Control-Tab>", lambda e: self._onglet_relatif(1))
-        r.bind_all("<Control-ISO_Left_Tab>", lambda e: self._onglet_relatif(-1))
-        r.bind_all("<Alt-Left>", lambda e: self.actif.precedent())
-        r.bind_all("<Alt-Right>", lambda e: self.actif.suivant())
-        r.bind_all("<F5>", lambda e: self.actif.recharger())
-        r.bind_all("<Control-r>", lambda e: self.actif.recharger())
-        r.bind_all("<Control-d>", lambda e: self.basculer_favori())
-        r.bind_all("<Control-h>", lambda e: self.nouvel_onglet("about:historique"))
-        r.bind_all("<Control-f>", lambda e: self.ouvrir_recherche())
-        r.bind_all("<Control-u>", lambda e: self.voir_source())
-        r.bind_all("<Control-plus>", lambda e: self.zoomer(1))
-        r.bind_all("<Control-equal>", lambda e: self.zoomer(1))
-        r.bind_all("<Control-KP_Add>", lambda e: self.zoomer(1))
-        r.bind_all("<Control-minus>", lambda e: self.zoomer(-1))
-        r.bind_all("<Control-KP_Subtract>", lambda e: self.zoomer(-1))
-        r.bind_all("<Control-0>", lambda e: self.zoomer(0))
-        r.bind_all("<Control-m>", lambda e: self.ouvrir_carte())
-        r.bind_all("<Control-n>", lambda e: self.annoter())
-        r.bind_all("<Control-i>", lambda e: self.analyser_page())
-        r.bind_all("<Control-c>", self._copier)
+
+        def lier(sequence, fonction):
+            # Certaines touches n'existent que sur un système (ISO_Left_Tab : Linux ;
+            # KP_Add : pas partout) : Tk refuse alors le raccourci, on l'ignore.
+            try:
+                r.bind_all(sequence, fonction)
+            except tk.TclError:
+                pass
+
+        lier("<Control-l>", lambda e: self._focus_adresse())
+        lier("<F6>", lambda e: self._focus_adresse())
+        lier("<Control-t>", lambda e: self.nouvel_onglet(pages_internes.PAGE_ACCUEIL))
+        lier("<Control-w>", lambda e: self.fermer_onglet(self.actif))
+        lier("<Control-Tab>", lambda e: self._onglet_relatif(1))
+        lier("<Control-Shift-Tab>", lambda e: self._onglet_relatif(-1))       # Windows, macOS
+        lier("<Control-ISO_Left_Tab>", lambda e: self._onglet_relatif(-1))    # Linux
+        lier("<Alt-Left>", lambda e: self.actif.precedent())
+        lier("<Alt-Right>", lambda e: self.actif.suivant())
+        lier("<F5>", lambda e: self.actif.recharger())
+        lier("<Control-r>", lambda e: self.actif.recharger())
+        lier("<Control-d>", lambda e: self.basculer_favori())
+        lier("<Control-h>", lambda e: self.nouvel_onglet("about:historique"))
+        lier("<Control-f>", lambda e: self.ouvrir_recherche())
+        lier("<Control-u>", lambda e: self.voir_source())
+        lier("<Control-plus>", lambda e: self.zoomer(1))
+        lier("<Control-equal>", lambda e: self.zoomer(1))
+        lier("<Control-KP_Add>", lambda e: self.zoomer(1))
+        lier("<Control-minus>", lambda e: self.zoomer(-1))
+        lier("<Control-KP_Subtract>", lambda e: self.zoomer(-1))
+        lier("<Control-0>", lambda e: self.zoomer(0))
+        lier("<Control-m>", lambda e: self.ouvrir_carte())
+        lier("<Control-n>", lambda e: self.annoter())
+        lier("<Control-i>", lambda e: self.analyser_page())
+        lier("<Control-c>", self._copier)
 
     # -- onglets ---------------------------------------------------------------
 
