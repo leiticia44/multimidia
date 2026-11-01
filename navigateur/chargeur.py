@@ -253,11 +253,19 @@ def sans_redirection(adresse):
         url = URL(adresse)
     except ValueError:
         return adresse
-    if url.schema in ("http", "https") and url.hote.endswith("duckduckgo.com") and url.chemin.startswith("/l/"):
-        for morceau in url.chemin.split("?", 1)[-1].split("&"):
-            cle, _, valeur = morceau.partition("=")
-            if cle == "uddg" and valeur:
-                return pourcent_decoder(valeur)
+    if url.schema not in ("http", "https") or "?" not in url.chemin:
+        return adresse
+    parametres = {}
+    for morceau in url.chemin.split("?", 1)[1].split("&"):
+        cle, _, valeur = morceau.partition("=")
+        parametres.setdefault(cle, pourcent_decoder(valeur, plus_en_espace=True))
+    if url.hote.endswith("duckduckgo.com") and url.chemin.startswith("/l/") and parametres.get("uddg"):
+        return parametres["uddg"]
+    # Une adresse tapée dans la case d'un moteur de recherche : on ouvre directement le site.
+    moteur = any(url.hote.endswith(h) for h in ("mojeek.com", "duckduckgo.com", "wikipedia.org"))
+    requete = (parametres.get("q") or parametres.get("search") or "").strip()
+    if moteur and " " not in requete and requete.lower().startswith(("http://", "https://")):
+        return requete
     return adresse
 
 

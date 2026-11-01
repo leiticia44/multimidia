@@ -261,6 +261,15 @@ class Onglet:
             self._charger(URL(cible))
             return
         self._redirections = 0
+        if pages_internes.est_anti_robot(resultat.url, resultat.titre, resultat.dom.texte_contenu()):
+            requete = ""
+            for morceau in resultat.url.chemin.split("?", 1)[-1].split("&"):
+                cle, _, valeur = morceau.partition("=")
+                if cle in ("q", "search") and valeur:
+                    requete = pourcent_decoder(valeur, plus_en_espace=True)
+            self.chargement = False
+            self._afficher_html(pages_internes.anti_robot(resultat.url, requete), str(resultat.url))
+            return
         self.page = resultat
         self.url = resultat.url
         if self.index >= 0:

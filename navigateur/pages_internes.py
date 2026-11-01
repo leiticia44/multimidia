@@ -8,11 +8,14 @@ from .reseau_personnel import lier_urls
 
 # Moteurs de recherche proposés (aucun n'est Google) : nom affiché, adresse, nom du paramètre.
 MOTEURS = {
-    "mojeek": ("Mojeek", "https://www.mojeek.com/search", "q"),
     "wikipedia": ("Wikipédia", "https://fr.wikipedia.org/w/index.php", "search"),
+    "mojeek": ("Mojeek", "https://www.mojeek.com/search", "q"),
     "duckduckgo": ("DuckDuckGo", "https://lite.duckduckgo.com/lite/", "q"),
 }
-moteur_actif = "mojeek"   # Mojeek par défaut : DuckDuckGo demande un test anti-robot en JavaScript
+# Wikipédia par défaut : Mojeek et DuckDuckGo affichent souvent un test anti-robot (captcha)
+# qui a besoin de JavaScript, que notre navigateur n'exécute pas.
+moteur_actif = "wikipedia"
+HOTES_MOTEURS = ("mojeek.com", "duckduckgo.com")
 
 
 def choisir_moteur(cle):
@@ -52,6 +55,29 @@ def _page(titre, contenu):
 def url_recherche(requete, cle=None):
     nom, adresse, parametre = MOTEURS[cle or moteur_actif]
     return adresse + "?" + parametre + "=" + pourcent_encoder(requete).replace("%20", "+")
+
+
+def anti_robot(url, requete):
+    """Page affichée quand un moteur de recherche demande un test anti-robot (captcha)."""
+    hote = url.hote
+    nom = next((n for n, adresse, _ in MOTEURS.values() if hote in adresse), hote)
+    relancer = ('<p><a href="%s"><b>Chercher « %s » avec Wikipédia</b></a></p>'
+                % (echapper(url_recherche(requete, "wikipedia")), echapper(requete))) if requete else ""
+    contenu = """<h1>%s demande un test anti-robot</h1>
+<div class=carte><p>Le moteur %s a affiché un <b>captcha</b> (« prouvez que vous n'êtes pas un robot »).
+Ce test a besoin de <b>JavaScript</b>, que notre navigateur n'exécute pas : la page resterait vide.</p>
+<p class=discret>Les moteurs de recherche protègent ainsi leurs résultats contre les programmes automatiques,
+et ils ne reconnaissent pas notre navigateur fait maison.</p></div>
+%s<p><a href="about:moteur?wikipedia">Utiliser Wikipédia comme moteur par défaut</a> &middot;
+<a href="%s">Accueil</a></p>""" % (echapper(nom), echapper(nom), relancer, PAGE_ACCUEIL)
+    return _page("Test anti-robot", contenu)
+
+
+def est_anti_robot(url, titre, texte):
+    if not any(url.hote.endswith(h) for h in HOTES_MOTEURS):
+        return False
+    titre, texte = (titre or "").lower(), (texte or "").lower()[:3000]
+    return "captcha" in titre or "bots use duckduckgo" in texte or "complete the following challenge" in texte
 
 
 def accueil(stockage):

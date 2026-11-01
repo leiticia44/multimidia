@@ -672,12 +672,12 @@ def liens_page(page, url):
 
 # ---------------------------------------------------------------------------
 # Méta-recherche (HyWebMap utilisait le méta-chercheur Copernic, qui n'existe plus).
-# Ici : Mojeek, puis Wikipédia, puis DuckDuckGo si un moteur ne répond pas. Jamais Google.
+# Ici : Wikipédia, puis Mojeek, puis DuckDuckGo si un moteur ne répond pas. Jamais Google.
 # ---------------------------------------------------------------------------
 
 MOTEURS_META = (
-    ("Mojeek", "https://www.mojeek.com/search?q="),
     ("Wikipédia", "https://fr.wikipedia.org/w/index.php?fulltext=1&search="),
+    ("Mojeek", "https://www.mojeek.com/search?q="),
     ("DuckDuckGo", "https://lite.duckduckgo.com/lite/?q="),
 )
 

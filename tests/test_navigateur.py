@@ -352,7 +352,7 @@ class TestPagesInternes(unittest.TestCase):
             page = charger_page(ClientHTTP(), URL("about:accueil"), stockage=Stockage(dossier))
         self.assertEqual(page.titre, "Accueil")
         formulaire = element(page.dom, "form")
-        self.assertIn("mojeek", formulaire.attributs["action"])
+        self.assertIn("wikipedia", formulaire.attributs["action"])
         self.assertNotIn("google", formulaire.attributs["action"])
 
     def test_annotations(self):
@@ -634,6 +634,20 @@ class TestRedirections(unittest.TestCase):
         self.assertEqual(sans_redirection("https://duckduckgo.com/l/?uddg=https%3A%2F%2Ffr.vikidia.org%2Fwiki%2FHyperlien"
                                           "&rut=8612d1"), "https://fr.vikidia.org/wiki/Hyperlien")
         self.assertEqual(sans_redirection("https://fr.wikipedia.org/wiki/X"), "https://fr.wikipedia.org/wiki/X")
+        # une adresse tapée dans la case de recherche : on ouvre le site
+        self.assertEqual(sans_redirection("https://www.mojeek.com/search?q=https%3A%2F%2Ffr.vikidia.org%2Fwiki%2FHyperlien"),
+                         "https://fr.vikidia.org/wiki/Hyperlien")
+        self.assertEqual(sans_redirection("https://www.mojeek.com/search?q=hypertexte"),
+                         "https://www.mojeek.com/search?q=hypertexte")
+
+    def test_page_anti_robot(self):
+        from navigateur import pages_internes
+        url = URL("https://www.mojeek.com/search?q=hypertexte")
+        self.assertTrue(pages_internes.est_anti_robot(url, "Captcha", ""))
+        self.assertFalse(pages_internes.est_anti_robot(url, "hypertexte - Mojeek Search", "résultats"))
+        self.assertFalse(pages_internes.est_anti_robot(URL("https://a.fr/"), "Captcha", ""))
+        html = pages_internes.anti_robot(url, "hypertexte")
+        self.assertIn("https://fr.wikipedia.org/w/index.php?search=hypertexte", html)
 
     def test_meta_refresh(self):
         from navigateur.chargeur import construire_page, rafraichissement
