@@ -505,6 +505,14 @@ class TestAgentWeb(unittest.TestCase):
         self.assertEqual(types[("/a1", "/a2")], "fils")
         self.assertEqual(types[("/a", "http://ailleurs.invalid/")], "externe")
 
+    def test_liens_du_contenu_d_abord(self):
+        from navigateur.reseau_personnel import caracteristiques_dom
+        dom = analyser_html('<nav><a href="/aide">Aide</a></nav><div id="mw-content-text"><p>'
+                            '<a href="/sujet">Sujet</a></p></div><footer><a href="/contact">Contact</a></footer>')
+        c = caracteristiques_dom(dom, URL("https://a.fr/"))
+        self.assertEqual([l[1] for l in c["liens"]], ["/aide", "/sujet", "/contact"])
+        self.assertEqual(c["contenu"], [False, True, False])
+
     def test_largeur(self):
         with tempfile.TemporaryDirectory() as dossier:
             base, ident = self.explorer(dossier, profondeur=1, largeur=1)

@@ -281,7 +281,10 @@ class AgentWeb:
 
             # Phase 1 : tous les liens de la page sont rangés dans la base (un seul enregistrement par page).
             suivis = 0
-            for texte_lien, href, cible, genre in car["liens"]:
+            # Les liens du texte de la page passent avant ceux des menus (accueil, aide, contact…) :
+            # avec une petite largeur, l'agent suit ainsi les liens qui parlent du sujet.
+            ordre = sorted(range(len(car["liens"])), key=lambda k: not car["contenu"][k])
+            for texte_lien, href, cible, genre in (car["liens"][k] for k in ordre):
                 id_ancre = self.base.ajouter_ancre(ident, texte_lien[:200], href, cible, valider=False)
                 cible_page = cible.split("#")[0]
                 if genre == "ancre":

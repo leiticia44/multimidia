@@ -556,6 +556,23 @@ def proprietes_dom(dom):
             "description": premier("description", "og:description"), "date_creation": premier(*META_DATES)}
 
 
+ZONES_MENU = {"nav", "header", "footer", "aside"}
+IDS_CONTENU = {"mw-content-text", "bodycontent", "content", "main", "contenu"}
+
+
+def _dans_le_contenu(noeud):
+    """Vrai si le lien est dans le texte principal de la page plutôt que dans un menu."""
+    n, contenu = noeud.parent, False
+    while isinstance(n, Element):
+        if n.balise in ZONES_MENU or n.attributs.get("role") in ("navigation", "banner", "contentinfo"):
+            return False
+        if n.balise in ("main", "article") or n.attributs.get("id", "").lower() in IDS_CONTENU \
+                or n.attributs.get("role") == "main":
+            contenu = True
+        n = n.parent
+    return contenu
+
+
 def caracteristiques_dom(dom, url, base=None):
     """Profil, propriétés et liens d'une page (relations « Profils » et « Propriété » de HyWebMap).
 
@@ -583,7 +600,7 @@ def caracteristiques_dom(dom, url, base=None):
             except ValueError:
                 pass
     base = base or url
-    liens, vus = [], set()
+    liens, vus, contenu = [], set(), []
     for n in elements:
         if n.balise != "a" or not n.attributs.get("href"):
             continue
@@ -605,6 +622,7 @@ def caracteristiques_dom(dom, url, base=None):
         else:
             genre = "externe"
         liens.append((" ".join(n.texte_contenu().split()) or adresse, href, adresse, genre))
+        contenu.append(_dans_le_contenu(n))
 
     corps = next((n for n in elements if n.balise == "body"), dom)
     texte = " ".join(_texte_visible(corps).split())
@@ -619,6 +637,7 @@ def caracteristiques_dom(dom, url, base=None):
                        "description": meta("description", "og:description"),
                        "date_creation": meta(*META_DATES)},
         "liens": liens,
+        "contenu": contenu,   # pour chaque lien : True s'il est dans le texte de la page (pas dans un menu)
         "autres": {"styles": compte("style") + sum(1 for n in elements if n.balise == "link"
                                                    and "stylesheet" in n.attributs.get("rel", "").lower()),
                    "tableaux": compte("table"), "formulaires": compte("form"),
