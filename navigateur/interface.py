@@ -15,7 +15,7 @@ from .chargeur import charger_page, construire_page, format_image
 from .mise_en_page import (CmdImage, CmdLigne, CmdOvale, CmdRect, CmdTexte, Contexte, LayoutDocument,
                            option_choisie, options_de, valeur_champ)
 from .reseau import ClientHTTP, ErreurReseau, URL, encoder_formulaire, pourcent_decoder
-from .reseau_personnel import caracteristiques_dom
+from .reseau_personnel import proprietes_dom
 from .stockage import Stockage
 
 NOM = "Navigateur Maison"
@@ -264,12 +264,15 @@ class Onglet:
         self.nav.stockage.ajouter_historique(str(self.url), self.titre)
         depuis, texte_lien = self.origine or (None, None)
         self.origine = None
-        self.nav.stockage.reseau.visite(str(self.url.sans_fragment()), self.titre, depuis, texte_lien,
-                                        getattr(resultat, "statut", 200) or 200)
-        if self.url.schema in ("http", "https", "file"):
+        reseau = self.nav.stockage.reseau
+        adresse = str(self.url.sans_fragment())
+        if self.url.schema in ("http", "https", "file") and adresse in reseau.noeuds:
             # auteur, mots-clés, date de création (balises meta) : utiles pour l'export (§ 2.10)
-            proprietes = caracteristiques_dom(resultat.dom, self.url)["proprietes"]
-            self.nav.stockage.reseau.enrichir(str(self.url.sans_fragment()), proprietes)
+            reseau.enrichir(adresse, proprietes_dom(resultat.dom))
+        reseau.visite(adresse, self.titre, depuis, texte_lien, getattr(resultat, "statut", 200) or 200)
+        if self.url.schema in ("http", "https", "file") and not reseau.noeuds.get(adresse, {}).get("auteur"):
+            reseau.enrichir(adresse, proprietes_dom(resultat.dom))
+            reseau.enregistrer()
         self.nav.rafraichir_carte()
         self.nav.mettre_a_jour()
 

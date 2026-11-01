@@ -248,7 +248,6 @@ class ReseauPersonnel:
                                 ("date_creation", "date_creation"), ("description", "description")):
             if proprietes.get(cle_source):
                 n[cle] = proprietes[cle_source]
-        self.enregistrer()
 
     def mots_cles(self, url):
         """Mots-clés d'un nœud : les siens, ceux de ses annotations et des balises meta."""
@@ -265,9 +264,13 @@ class ReseauPersonnel:
 
     # -- site exploré par l'agent Web (§ 2.3 : le réseau virtuel présente l'espace du site) --
     def importer_exploration(self, noeuds, liaisons):
-        """Ajoute au réseau les nœuds et les liens d'une exploration de l'agent (base SQLite)."""
+        """Ajoute au réseau le site exploré par l'agent (base SQLite) : les pages analysées et
+        les liens rompus trouvés. Les milliers de liens simplement répertoriés restent dans la
+        base (fenêtre de l'agent) pour que la carte reste lisible."""
+        retenus = [n for n in noeuds if n.get("explore") or _rompu(n.get("statut"))]
+        urls = {n["url"] for n in retenus}
         ajoutes = 0
-        for n in noeuds:
+        for n in retenus:
             url = n["url"]
             if url not in self.noeuds:
                 ajoutes += 1
@@ -280,11 +283,14 @@ class ReseauPersonnel:
                                   ("copie", "copie")):
                 if n.get(cle_base):
                     noeud[cle] = n[cle_base]
-        if self.racine is None and noeuds:
-            self.racine = noeuds[0]["url"]
+        if self.racine is None and retenus:
+            self.racine = retenus[0]["url"]
+        existants = {(l["de"], l["vers"]) for l in self.liens}
         for l in liaisons:
-            if l["de"] == l["vers"] or any(x["de"] == l["de"] and x["vers"] == l["vers"] for x in self.liens):
+            cle = (l["de"], l["vers"])
+            if l["de"] == l["vers"] or cle in existants or l["de"] not in urls or l["vers"] not in urls:
                 continue
+            existants.add(cle)
             self.liens.append({"de": l["de"], "vers": l["vers"], "nom": (l.get("texte") or "")[:60],
                                "perso": False, "agent": True, "parcouru": False, "type": l.get("type", "")})
         self.enregistrer()
@@ -530,6 +536,24 @@ def verifier_lien(client, adresse):
 
 META_DATES = ("date", "dcterms.created", "dc.date", "dc.date.created", "created",
               "article:published_time", "dcterms.date")
+
+
+def proprietes_dom(dom):
+    """Seulement les propriétés (titre, auteur, mots-clés, date, description) : rapide, car on ne
+    parcourt que l'en-tête <head> de la page."""
+    tete = next((n for n in dom.enfants if isinstance(n, Element) and n.balise == "head"), dom)
+    titre, metas = "", {}
+    for n in parcourir(tete):
+        if isinstance(n, Element):
+            if n.balise == "title" and not titre:
+                titre = " ".join(n.texte_contenu().split())
+            elif n.balise == "meta":
+                nom = (n.attributs.get("name") or n.attributs.get("property") or "").lower()
+                metas.setdefault(nom, n.attributs.get("content", "").strip())
+    premier = lambda *noms: next((metas[m] for m in noms if metas.get(m)), "")
+    return {"titre": titre, "auteur": premier("author", "dc.creator", "dcterms.creator"),
+            "mots_cles": premier("keywords", "news_keywords"),
+            "description": premier("description", "og:description"), "date_creation": premier(*META_DATES)}
 
 
 def caracteristiques_dom(dom, url, base=None):

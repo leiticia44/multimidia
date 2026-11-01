@@ -608,6 +608,8 @@ class FenetreNoeudLibre:
 # ---------------------------------------------------------------------------
 
 class FenetreCarte:
+    MAX_AFFICHES = 250
+
     def __init__(self, nav):
         self.nav = nav
         self.reseau = nav.stockage.reseau
@@ -705,6 +707,14 @@ class FenetreCarte:
         if self.centre in self.reseau.noeuds:
             voisins = self.reseau.voisins(self.centre)
             urls = [u for u in urls if u in voisins]
+        self.masques = 0
+        if len(urls) > self.MAX_AFFICHES:
+            # carte trop grande pour rester lisible : d'abord la racine et les pages visitées
+            noeuds = self.reseau.noeuds
+            urls.sort(key=lambda u: (u != self.reseau.racine, noeuds[u].get("visites", 0) == 0,
+                                     noeuds[u].get("niveau", 0)))
+            self.masques = len(urls) - self.MAX_AFFICHES
+            urls = urls[:self.MAX_AFFICHES]
         return urls
 
     def _titre(self, u):
@@ -738,9 +748,16 @@ class FenetreCarte:
 
         # ---- liens : parcourus en rouge, non parcourus en gris, personnels en pointillés (§ 2.3, 2.8) ----
         etiquettes = []
+        entrants = set()
         for l in reseau.liens:
             if l["de"] not in self.positions or l["vers"] not in self.positions:
                 continue
+            if l.get("agent") and not l.get("parcouru") and self.centre is None and len(self.positions) > 12:
+                # Grand site exploré par l'agent : en vue complète, on ne dessine que l'arbre du site
+                # (un seul lien d'arrivée par page). Tous les liens restent visibles en vue locale.
+                if l.get("type") == "référence" or l["vers"] in entrants:
+                    continue
+                entrants.add(l["vers"])
             x1, y1, w1 = self.positions[l["de"]]
             x2, y2, w2 = self.positions[l["vers"]]
             if x2 > x1:
@@ -815,9 +832,11 @@ class FenetreCarte:
             message = ("Cliquez sur la page de destination du lien personnel depuis « %s » (Échap pour annuler)."
                        % self._titre(self.lien_depuis))
         else:
-            message = "%d nœud(s) affiché(s) sur %d, %d lien(s) personnel(s).%s Clic : ouvrir — clic droit : outils." % (
+            message = "%d nœud(s) affiché(s) sur %d, %d lien(s) personnel(s).%s%s Clic : ouvrir — clic droit : outils." % (
                 len(self.positions), len(reseau.noeuds), sum(1 for l in reseau.liens if l["perso"]),
-                "  Vue locale autour de « %s »." % self._titre(self.centre) if self.centre else "")
+                "  Vue locale autour de « %s »." % self._titre(self.centre) if self.centre else "",
+                "  %d nœud(s) non affiché(s) : utilisez le filtre Niveau ou la vue locale." % self.masques
+                if self.masques else "")
         self.info.configure(text=message)
 
     def _noeud_sous(self, e):

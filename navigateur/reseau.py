@@ -364,6 +364,7 @@ class ClientHTTP:
         self.cookies = BocalACookies()
         self.cache = Cache()
         self.contexte_tls = ssl.create_default_context()
+        self.delai = DELAI_RESEAU   # secondes ; plus court pour les simples vérifications de liens
 
     # -- point d'entrée ---------------------------------------------------
 
@@ -441,7 +442,7 @@ class ClientHTTP:
         proxy = _proxy_pour(url)
         try:
             if proxy:
-                connexion = socket.create_connection(proxy, timeout=DELAI_RESEAU)
+                connexion = socket.create_connection(proxy, timeout=self.delai)
                 if url.schema == "https":
                     cible = "%s:%d" % (url.hote, url.port)
                     connexion.sendall(("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n" % (cible, cible)).encode("ascii"))
@@ -456,7 +457,7 @@ class ClientHTTP:
                         connexion.close()
                         raise ErreurReseau("Le proxy a refusé la connexion : %s" % ligne)
             else:
-                connexion = socket.create_connection((url.hote, url.port), timeout=DELAI_RESEAU)
+                connexion = socket.create_connection((url.hote, url.port), timeout=self.delai)
             if url.schema == "https":
                 connexion = self.contexte_tls.wrap_socket(connexion, server_hostname=url.hote)
         except socket.gaierror:

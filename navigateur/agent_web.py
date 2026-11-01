@@ -87,11 +87,18 @@ class BaseHyWebMap:
     def fermer(self):
         self.cnx.close()
 
-    def _ecrire(self, requete, valeurs=()):
+    def _ecrire(self, requete, valeurs=(), valider=True):
         with self.verrou:
             curseur = self.cnx.execute(requete, valeurs)
-            self.cnx.commit()
+            if valider:
+                self.cnx.commit()
             return curseur.lastrowid
+
+    def valider(self):
+        """Enregistre sur le disque les écritures en attente (une fois par page analysée :
+        un enregistrement par lien serait très lent avec les pages de plus de 1 000 liens)."""
+        with self.verrou:
+            self.cnx.commit()
 
     def _lire(self, requete, valeurs=()):
         with self.verrou:
@@ -102,27 +109,30 @@ class BaseHyWebMap:
         return self._ecrire("INSERT INTO exploration (url_depart, date, profondeur, largeur, meme_site) "
                             "VALUES (?, ?, ?, ?, ?)", (url, maintenant(), profondeur, largeur, int(meme_site)))
 
-    def noeud(self, exploration, url, niveau, parent=None):
+    def noeud(self, exploration, url, niveau, parent=None, valider=True):
         """Renvoie l'identifiant du nœud ``url`` (créé s'il n'existe pas encore)."""
         lignes = self._lire("SELECT id FROM noeud WHERE exploration = ? AND url = ?", (exploration, url))
         if lignes:
             return lignes[0]["id"]
-        site = URL(url).hote if "://" in url else ""
+        try:
+            site = URL(url).hote if "://" in url else ""
+        except ValueError:
+            site = ""
         return self._ecrire("INSERT INTO noeud (exploration, url, site, niveau, parent) VALUES (?, ?, ?, ?, ?)",
-                            (exploration, url, site, niveau, parent))
+                            (exploration, url, site, niveau, parent), valider)
 
-    def maj_noeud(self, ident, **champs):
+    def maj_noeud(self, ident, valider=True, **champs):
         if champs:
             cles = ", ".join("%s = ?" % c for c in champs)
-            self._ecrire("UPDATE noeud SET %s WHERE id = ?" % cles, tuple(champs.values()) + (ident,))
+            self._ecrire("UPDATE noeud SET %s WHERE id = ?" % cles, tuple(champs.values()) + (ident,), valider)
 
-    def ajouter_ancre(self, noeud, texte, href, cible):
+    def ajouter_ancre(self, noeud, texte, href, cible, valider=True):
         return self._ecrire("INSERT INTO ancre (noeud, texte, href, cible) VALUES (?, ?, ?, ?)",
-                            (noeud, texte, href, cible))
+                            (noeud, texte, href, cible), valider)
 
-    def ajouter_liaison(self, exploration, document_a, document_b, ancre):
+    def ajouter_liaison(self, exploration, document_a, document_b, ancre, valider=True):
         return self._ecrire("INSERT INTO liaison (exploration, document_a, document_b, ancre) VALUES (?, ?, ?, ?)",
-                            (exploration, document_a, document_b, ancre))
+                            (exploration, document_a, document_b, ancre), valider)
 
     def enregistrer_profil(self, noeud, p):
         self._ecrire("INSERT OR REPLACE INTO profil VALUES (?, ?, ?, ?, ?, ?)",
@@ -237,6 +247,7 @@ class AgentWeb:
         site = URL(depart).hote
         exploration = self.base.nouvelle_exploration(depart, profondeur, largeur, meme_site)
         racine = self.base.noeud(exploration, depart, 0)
+        identifiants = {depart: racine}       # adresse -> identifiant du nœud (évite de relire la base)
         file = deque([(depart, racine, 0)])
         explores = set()
         a_verifier = {}
@@ -251,8 +262,9 @@ class AgentWeb:
             try:
                 reponse = self.client.charger(URL(adresse))
                 statut = reponse.statut
-            except (ErreurReseau, ValueError, OSError):
+            except (ErreurReseau, ValueError, OSError) as erreur:
                 self.base.maj_noeud(ident, statut=0, explore=1, date_analyse=maintenant())
+                rappel("Page injoignable : %s (%s)" % (adresse, erreur))
                 continue
             self.base.maj_noeud(ident, statut=statut, explore=1, date_analyse=maintenant())
             if statut >= 400 or reponse.type_mime not in TYPES_HTML:
@@ -267,16 +279,19 @@ class AgentWeb:
             self.base.enregistrer_profil(ident, car["profil"])
             self.base.enregistrer_propriete(ident, car["proprietes"])
 
-            # Phase 1 : tous les liens de la page sont rangés dans la base.
+            # Phase 1 : tous les liens de la page sont rangés dans la base (un seul enregistrement par page).
             suivis = 0
             for texte_lien, href, cible, genre in car["liens"]:
-                id_ancre = self.base.ajouter_ancre(ident, texte_lien, href, cible)
+                id_ancre = self.base.ajouter_ancre(ident, texte_lien[:200], href, cible, valider=False)
                 cible_page = cible.split("#")[0]
                 if genre == "ancre":
-                    self.base.ajouter_liaison(exploration, ident, ident, id_ancre)
+                    self.base.ajouter_liaison(exploration, ident, ident, id_ancre, valider=False)
                     continue
-                autre = self.base.noeud(exploration, cible_page, niveau + 1, ident)
-                self.base.ajouter_liaison(exploration, ident, autre, id_ancre)
+                autre = identifiants.get(cible_page)
+                if autre is None:
+                    autre = identifiants[cible_page] = self.base.noeud(exploration, cible_page, niveau + 1, ident,
+                                                                       valider=False)
+                self.base.ajouter_liaison(exploration, ident, autre, id_ancre, valider=False)
                 # Phases 2 et 3 : on suit les « largeur » premiers liens, jusqu'à la profondeur choisie.
                 hors_site = URL(cible_page).hote != site
                 if (niveau < profondeur and suivis < largeur and cible_page not in explores
@@ -286,16 +301,33 @@ class AgentWeb:
                     file.append((cible_page, autre, niveau + 1))
                 elif cible_page not in explores:
                     a_verifier[cible_page] = autre
+            self.base.valider()
 
         # Liens non explorés : on vérifie seulement qu'ils existent encore (liens obsolètes).
-        if verifier_liens:
-            for adresse, ident in list(a_verifier.items())[:max_pages * 3]:
-                if annule() or adresse in explores:
-                    break
-                if not adresse.startswith(("http://", "https://")):
-                    continue
-                rappel("Vérification : %s" % adresse)
-                self.base.maj_noeud(ident, statut=_code(self.client, adresse))
+        # Plusieurs vérifications en parallèle, avec un délai court : un site qui ne répond pas
+        # ne doit pas bloquer l'agent.
+        if verifier_liens and not annule():
+            liste = [(a, i) for a, i in a_verifier.items()
+                     if a not in explores and a.startswith(("http://", "https://"))][:max(30, max_pages * 2)]
+            rappel("Vérification de %d lien(s) non exploré(s)…" % len(liste))
+            codes = {}
+
+            def verifier(lot):
+                client = type(self.client)()
+                client.delai = 6
+                for adresse, ident in lot:
+                    if annule():
+                        return
+                    codes[ident] = _code(client, adresse)
+
+            fils = [threading.Thread(target=verifier, args=(liste[k::8],), daemon=True) for k in range(8)]
+            for f in fils:
+                f.start()
+            for f in fils:
+                f.join()
+            for ident, code in codes.items():
+                self.base.maj_noeud(ident, valider=False, statut=code)
+            self.base.valider()
 
         self.base._ecrire("UPDATE exploration SET nb_pages = ? WHERE id = ?", (len(explores), exploration))
         self.base.typer(exploration)
