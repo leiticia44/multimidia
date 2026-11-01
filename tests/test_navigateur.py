@@ -422,5 +422,200 @@ class TestHyWebMap(unittest.TestCase):
         self.assertEqual(profil["Nombre de liens externes"], 1)
 
 
+# ---------------------------------------------------------------------------
+# Étapes de l'article HyWebMap : agent Web, base, typologie, réseau virtuel
+# ---------------------------------------------------------------------------
+
+SITE = {
+    "/": '<html><head><title>Accueil</title><meta name="author" content="Saleh"></head><body>'
+         '<a href="/a">Page A</a> <a href="/b">Page B</a> <a href="/absente">Morte</a> <a href="#bas">bas</a>'
+         '<p id="bas">fin</p></body></html>',
+    "/a": '<html><head><title>A</title><meta name="keywords" content="carte, navigation"></head><body>'
+          '<a href="/a1">A1</a> <a href="/">Retour</a> <a href="http://ailleurs.invalid/">Ailleurs</a>'
+          '<img src="i.png"><script>x</script></body></html>',
+    "/b": "<html><head><title>B</title></head><body><p>feuille</p></body></html>",
+    "/a1": '<html><head><title>A1</title></head><body><a href="/a2">A2</a></body></html>',
+    "/a2": "<html><head><title>A2</title></head><body>trop profond</body></html>",
+}
+
+
+class ServeurSite(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *arguments):
+        pass
+
+    def do_GET(self):
+        corps = SITE.get(self.path)
+        statut = 200 if corps is not None else 404
+        corps = (corps or "introuvable").encode("utf-8")
+        self.send_response(statut)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(corps)))
+        self.end_headers()
+        self.wfile.write(corps)
+
+
+class TestAgentWeb(unittest.TestCase):
+    """§ 2.1 et 2.2 : exploration paramétrable et base de données relationnelle."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.serveur = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ServeurSite)
+        cls.base_url = "http://127.0.0.1:%d" % cls.serveur.server_address[1]
+        threading.Thread(target=cls.serveur.serve_forever, daemon=True).start()
+        cls.anciens = {cle: os.environ.pop(cle) for cle in list(os.environ) if cle.lower() == "http_proxy"}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.serveur.shutdown()
+        os.environ.update(cls.anciens)
+
+    def explorer(self, dossier, **options):
+        from navigateur.agent_web import AgentWeb, BaseHyWebMap
+        base = BaseHyWebMap(os.path.join(dossier, "hywebmap.db"))
+        agent = AgentWeb(ClientHTTP(), base, os.path.join(dossier, "copies"))
+        ident = agent.explorer(self.base_url + "/", verifier_liens=False, **options)
+        return base, ident
+
+    def test_profondeur_et_base(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            base, ident = self.explorer(dossier, profondeur=2, largeur=10)
+            noeuds = {n["url"].replace(self.base_url, ""): n for n in base.noeuds(ident)}
+            liaisons = base.liaisons(ident)
+            base.fermer()
+        self.assertEqual(noeuds["/"]["type"], "racine")
+        self.assertEqual(noeuds["/"]["auteur"], "Saleh")                 # relation Propriété
+        self.assertEqual(noeuds["/a"]["type"], "parent")
+        self.assertEqual(noeuds["/b"]["type"], "fils")
+        self.assertEqual(noeuds["/a"]["nb_images"], 1)                  # relation Profils
+        self.assertEqual(noeuds["/a"]["nb_liens_externes"], 1)
+        self.assertEqual(noeuds["/a"]["mots_cles"], "carte, navigation")
+        self.assertEqual(noeuds["/absente"]["statut"], 404)
+        self.assertTrue(noeuds["/a1"]["explore"])                       # niveau 2 exploré
+        self.assertFalse(noeuds["/a2"]["explore"])                      # niveau 3 : au-delà de la profondeur
+        self.assertTrue(noeuds["/a1"]["copie"])                         # ressource rapatriée
+        types = {(l["de"].replace(self.base_url, ""), l["vers"].replace(self.base_url, "")): l["type"]
+                 for l in liaisons}
+        self.assertEqual(types[("/", "/a")], "ancêtre")
+        self.assertEqual(types[("/", "/absente")], "interne rompu")
+        self.assertEqual(types[("/", "/")], "interne")                  # ancre dans la même page
+        self.assertEqual(types[("/a", "/")], "référence")               # retour : lien libre
+        self.assertEqual(types[("/a", "/a1")], "parent")
+        self.assertEqual(types[("/a1", "/a2")], "fils")
+        self.assertEqual(types[("/a", "http://ailleurs.invalid/")], "externe")
+
+    def test_largeur(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            base, ident = self.explorer(dossier, profondeur=1, largeur=1)
+            explores = sorted(n["url"].replace(self.base_url, "") for n in base.noeuds(ident) if n["explore"])
+            base.fermer()
+        self.assertEqual(explores, ["/", "/a"])                         # un seul lien suivi par page
+
+    def test_import_dans_le_reseau_virtuel(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            base, ident = self.explorer(dossier, profondeur=1, largeur=10)
+            reseau = Stockage(dossier).reseau
+            ajoutes = reseau.importer_exploration(base.noeuds(ident), base.liaisons(ident))
+            base.fermer()
+            racine = self.base_url + "/"
+            self.assertGreaterEqual(ajoutes, 4)
+            self.assertEqual(reseau.racine, racine)
+            self.assertEqual(reseau.noeuds[racine]["visites"], 0)       # pas encore visité
+            reseau.visite(self.base_url + "/a", "A", depuis=racine, texte_lien="Page A")
+            lien = next(l for l in reseau.liens if l["de"] == racine and l["vers"] == self.base_url + "/a")
+            self.assertTrue(lien["parcouru"])                          # lien parcouru : affiché en rouge
+            self.assertEqual(reseau.type_lien(lien), "ancêtre")
+            self.assertEqual(reseau.noeuds[self.base_url + "/absente"]["statut"], "rompu")
+
+
+class TestReseauVirtuel(unittest.TestCase):
+    """§ 2.5 à 2.9 : nœuds libres, surveillance, propositions, annotations, export."""
+
+    def test_noeud_libre_et_ressource(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            reseau = Stockage(dossier).reseau
+            reseau.visite("https://a.fr/", "A")
+            cle = reseau.ajouter_noeud_libre("Remarques personnelles", mots_cles="hypertexte, carte",
+                                             annotation="à compléter", relier_a="https://a.fr/", nom_lien="complète")
+            self.assertEqual(cle, "libre:1")
+            self.assertEqual(reseau.type_noeud(cle), "libre")
+            self.assertEqual(reseau.mots_cles(cle), ["hypertexte", "carte"])
+            nouvelle = reseau.affecter_ressource(cle, "b.fr/page")
+            self.assertEqual(nouvelle, "https://b.fr/page")
+            self.assertTrue(any(l["vers"] == nouvelle and l["nom"] == "complète" for l in reseau.liens))
+            self.assertEqual(reseau.annotations_de(nouvelle)[0]["note"], "à compléter")
+            self.assertEqual(reseau.type_lien(next(l for l in reseau.liens if l["vers"] == nouvelle)), "référence")
+
+    def test_typologie_et_surveillance(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            reseau = Stockage(dossier).reseau
+            reseau.visite("https://a.fr/", "A")
+            reseau.visite("https://a.fr/p", "P", depuis="https://a.fr/")
+            reseau.visite("https://a.fr/f", "F", depuis="https://a.fr/p")
+            reseau.visite("https://autre.fr/", "X", depuis="https://a.fr/p")
+            self.assertEqual(reseau.type_noeud("https://autre.fr/"), "externe")
+            self.assertEqual(reseau.decision_surveillance("https://a.fr/"), "changer_racine")
+            self.assertEqual(reseau.decision_surveillance("https://a.fr/f"), "supprimer")
+            self.assertEqual(reseau.decision_surveillance("https://a.fr/p"), "garder_vide")
+            reseau.annoter("https://a.fr/p", "P", "", "note", "veille")
+            self.assertEqual(reseau.decision_surveillance("https://a.fr/p"), "rechercher_remplacant")
+            self.assertEqual(reseau.niveaux(), [0, 1, 2])
+            self.assertEqual(reseau.voisins("https://a.fr/p"),
+                             {"https://a.fr/", "https://a.fr/p", "https://a.fr/f", "https://autre.fr/"})
+
+    def test_propositions_et_dictionnaire(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            reseau = Stockage(dossier).reseau
+            reseau.annoter("https://a.fr/", "A", "la carte du réseau", "voir aussi https://b.fr/", "cartographie")
+            reseau.annoter("https://a.fr/", "A", "les liens", "", "cartographie, lien")
+            reseau.annoter("https://c.fr/", "C", "", "autre", "hypertexte")
+            self.assertEqual(reseau.mots_cles_frequents(1), ["cartographie"])
+            reseau.charger_dictionnaire_texte("cartographie : carte, plan\nhypertexte : hypermédia")
+            self.assertEqual(len(reseau.chercher_annotations("plan")), 2)            # synonyme
+            self.assertEqual(len(reseau.chercher_annotations("hypermédia")), 1)
+            self.assertEqual(len(reseau.chercher_annotations("c.fr", champ="url")), 1)
+            self.assertEqual(len(reseau.chercher_annotations("c.fr", champ="note")), 0)
+            groupes = reseau.regrouper_par_document(reseau.annotations)
+            self.assertEqual(groupes[0][3], "la carte du réseau […] les liens")       # résumé fusionné
+            self.assertTrue(reseau.ajouter_proposition("https://d.fr/", "D", "cartographie", "https://a.fr/"))
+            self.assertTrue(reseau.noeuds["https://d.fr/"]["np"])
+            reseau.visite("https://d.fr/", "D")
+            self.assertNotIn("np", reseau.noeuds["https://d.fr/"])
+
+    def test_meta_recherche(self):
+        from navigateur.reseau_personnel import analyser_resultats
+        html = ('<a rel="nofollow" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Ffr.wikipedia.org%2Fwiki%2FHypertexte'
+                '&amp;rut=x" class="result-link">Hypertexte</a><a href="https://duckduckgo.com/aide">Aide</a>'
+                '<a class="result-link" href="https://www.w3.org/">W3C</a>')
+        self.assertEqual(analyser_resultats(html, URL("https://lite.duckduckgo.com/lite/")),
+                         [("Hypertexte", "https://fr.wikipedia.org/wiki/Hypertexte"), ("W3C", "https://www.w3.org/")])
+
+    def test_export_deux_cadres(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            reseau = Stockage(dossier).reseau
+            reseau.visite("https://a.fr/", "Accueil A")
+            reseau.visite("https://a.fr/b.html", "Page B", depuis="https://a.fr/", texte_lien="vers B")
+            reseau.noeuds["https://a.fr/b.html"]["auteur"] = "Papy"
+            reseau.annoter("https://a.fr/b.html", "Page B", "passage", "Idée clé", "")
+            chemin = reseau.exporter_html(os.path.join(dossier, "reseau.html"), "Réseau THYP")
+            fichiers = sorted(os.listdir(os.path.join(dossier, "reseau_fichiers")))
+            with open(chemin, encoding="utf-8") as f:
+                entree = f.read()
+            with open(os.path.join(dossier, "reseau_fichiers", "n1.html"), encoding="utf-8") as f:
+                fiche = f.read()
+            # notre navigateur n'affiche pas les cadres : il montre la version <noframes>
+            page = charger_page(ClientHTTP(), URL("file://" + chemin))
+        self.assertEqual(page.titre, "Réseau THYP")
+        self.assertIn("Idée clé", page.dom.texte_contenu())
+        self.assertEqual(fichiers, ["n0.html", "n1.html", "navigation.html"])
+        self.assertIn("<frameset", entree)
+        self.assertIn('href="https://a.fr/b.html"', entree)            # adresses externes intactes
+        self.assertIn('href="#n1"', entree)                            # sommaire de la version sans cadres
+        for attendu in ("Réseau THYP", "Page B", "Papy", "Idée clé", "Annotations personnelles"):
+            self.assertIn(attendu, fiche)
+        self.assertLess(fiche.index("Type de nœud"), fiche.index("Annotations personnelles"))
+
+
 if __name__ == "__main__":
     unittest.main()

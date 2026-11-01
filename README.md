@@ -42,30 +42,29 @@ Le fichier `exemples/demo.html` montre tout ce que le moteur sait afficher.
 
 Le moteur de recherche par défaut est **DuckDuckGo**, pas Google.
 
-## Outils inspirés de HyWebMap
+## Les étapes de l'article HyWebMap
 
-Nous nous sommes appuyés sur l'article de **Saleh, Papy et Bouhaï, « HyWebMap : un outil
-d'agrégation, d'organisation et de veille technologique pour le Web »** (ISKO 2001,
+Nous avons suivi, section par section, l'article de **Saleh, Papy et Bouhaï, « HyWebMap : un
+outil d'agrégation, d'organisation et de veille technologique pour le Web »** (ISKO 2001,
 laboratoire Paragraphe, Université Paris 8). L'article part d'un constat : la navigation
 hypertexte provoque de la **désorientation** et une **surcharge cognitive**. Un historique
-en liste et des favoris rangés en dossiers ne suffisent pas pour s'y retrouver. Nous avons
-donc ajouté au navigateur plusieurs de ses propositions.
+en liste et des favoris rangés en dossiers ne suffisent pas pour s'y retrouver.
 
-| Idée de l'article | Dans le navigateur |
-|---|---|
-| **Carte du réseau** (« réseau virtuel ») pour savoir *où je suis* | **Carte de navigation** (`Ctrl+M`) : chaque page visitée est un nœud, chaque lien suivi une flèche nommée par le texte du lien. Les pages sont rangées en colonnes selon leur profondeur, la page courante et le nœud racine sont mis en évidence. Un clic ouvre la page. |
-| **Liens personnels** ajoutés par le lecteur, sans modifier les sites d'origine | Clic droit sur un nœud › « Créer un lien personnel », puis clic sur la destination et choix d'un nom (« explique », « contredit »…). Ces liens sont dessinés en pointillés rouges, comme dans HyWebMap. |
-| **Typologie des nœuds** (racine, parent, fils, orphelin) | Affichée au clic droit sur un nœud et dans l'analyse de la page. Le nœud racine peut être changé. |
-| **Agents de surveillance** des pages du réseau | Bouton « Vérifier les nœuds » : chaque page est testée (requête `HEAD`) et celles qui ont disparu sont grisées. |
-| **Liens obsolètes ou rompus** | Fenêtre *Analyse* (`Ctrl+I`), onglet *Liens* : tous les liens de la page sont classés (interne, externe, ancre) et testés en parallèle (ok, rompu 404, injoignable). |
-| **Profil d'une page** (caractères, images, liens internes et externes, scripts…) | Onglet *Profil* de l'analyse, avec aussi le titre, l'auteur et les mots-clés des balises `<meta>`. |
-| **Annotations** : un passage, une note, des mots-clés, une date, un numéro | On sélectionne du texte à la souris (`Ctrl+C` copie), puis `Ctrl+N`. À chaque nouvelle visite, les passages annotés sont **resurlignés en vert**. Si la page a changé et que le passage n'existe plus, l'annotation est signalée comme introuvable. Toutes les annotations sont consultables et cherchables dans `about:annotations`. |
-| **Navigation par date** | Dans la carte, filtre des pages visitées entre deux dates, sans doublons. |
-| **Génération d'un site HTML** à partir du réseau | Menu ☰ › « Exporter mon réseau en site HTML » : un sommaire en arbre et une fiche par page (liens, type de nœud, annotations), lisible par n'importe quel navigateur. |
+| Étape de l'article | Dans le navigateur | Où |
+|---|---|---|
+| **§ 2.1 Agent Web** : à partir d'une adresse, analyser la page, répertorier ses liens, explorer par phases, détecter les liens obsolètes. Exploration exponentielle (k^n pages) donc paramétrable en **profondeur** et en **largeur** | Fenêtre *Agent Web* (`Ctrl+E`) : page de départ, profondeur (niveaux), largeur (liens suivis par page), nombre maximum de pages, rester sur le même site, vérifier les liens non explorés, rapatrier une copie des pages. Exploration en largeur, niveau par niveau, dans un fil séparé | `agent_web.py` |
+| **§ 2.2 Base de données** : nœuds, liens, ancres, profils (caractères, images, liens externes et internes, scripts), propriétés (titre, date de création, mots-clés, auteur), relation liaison(Document-A, Document-B, Lien-L) | Base relationnelle **SQLite** (incluse dans Python) : tables `noeud`, `ancre`, `liaison`, `profil`, `propriete`, `exploration`, dans `~/.navigateur_maison/hywebmap.db`. Chaque exploration y reste consultable | `agent_web.py` |
+| **§ 2.3 Cartographie (réseau virtuel)** : la carte du site visité, que le lecteur modifie en ajoutant ses nœuds et ses liens personnels, en rouge, sans toucher aux pages sources | Carte (`Ctrl+M`) : vos visites et les sites explorés par l'agent (« Ajouter au réseau virtuel »). Liens personnels en pointillés rouges, enregistrés sur votre ordinateur | `hywebmap.py` |
+| **§ 2.4 Espace de connaissances personnel** : naviguer localement, réorganiser un site, construire des réseaux thématiques | Copies locales des pages (option « rapatrier »), ouvertes hors connexion depuis la carte ; liens personnels et nœuds libres pour réorganiser | `hywebmap.py` |
+| **§ 2.5 Typologie** : 5 types de nœuds (racine, parent, fils, orphelin, externe) et 7 types de liens (ancêtre, parent, fils, référence, interne, externe, rompu interne ou externe). **Nœud libre** : un nom, une ressource Web, des descripteurs, une annotation | Types calculés par l'agent et par le réseau, affichés dans la carte (clic droit), dans l'agent et dans l'export. Nœuds libres : bouton *Nœud libre…*, puis « Affecter une ressource » | `agent_web.py`, `reseau_personnel.py` |
+| **§ 2.6 Agents de surveillance** : contrôle périodique ; nœud fils disparu → suppression locale ; nœud parent → alerte et nœud gardé « vide », ou méta-recherche avec ses mots-clés pour proposer 3 pages ; nœud racine → choisir une autre racine. Rapatriement des ressources. **Agent de profil** : propositions marquées « NP » | *Vérifier les nœuds* applique ces règles ; *Surveillance automatique* toutes les 30 min. La méta-recherche utilise DuckDuckGo (Copernic dans l'article). *Propositions (NP)* cherche des pages avec vos mots-clés les plus fréquents | `hywebmap.py`, `reseau_personnel.py` |
+| **§ 2.8 Outils de navigation** : nœuds visités en rouge, liens parcourus en rouge ; navigation par historique, par niveau d'arborescence, par date ; le nœud sélectionné avec ses voisins | Point plein = visité, flèche rouge = parcourue, grise = non parcourue. Filtres *Niveau* et *Du… au…* ; clic droit › « Afficher ce nœud et ses voisins » | `hywebmap.py` |
+| **§ 2.9 Annotations** : passage surligné, note (texte et liens), date, numéro, mots-clés ; annotations affichées en bas de l'écran, clic → aller au passage ; en gris si le passage a disparu ; recherche plein texte ou par attribut, groupée par document avec un résumé ; dictionnaire personnel | Sélection à la souris puis `Ctrl+N`. **Panneau des annotations** en bas de la page. `about:annotations` : recherche par champ (date, titre, URL, passage, note, mots-clés), regroupement par document et résumé des passages. *Dictionnaire* : synonymes pris en compte dans la recherche | `interface.py`, `pages_internes.py` |
+| **§ 2.10 Génération d'un site Web** : le réseau en HTML, deux cadres (navigation à gauche, profil de la page à droite), annotations en bas | *Exporter en HTML* : page d'entrée en deux cadres + un dossier avec la navigation et une fiche par nœud (nom du réseau, titre, URL, mots-clés, auteur, date de création, liens typés, annotations) | `reseau_personnel.py` |
 
 Comme le disent les auteurs en citant Pierre Lévy, ces outils font du **lecteur un auteur** :
 en nommant les liens, en ajoutant les siens et en annotant, il construit sa propre structure
-hypertextuelle par-dessus le Web. Tout reste sur l'ordinateur, dans `~/.navigateur_maison/reseau.json`.
+hypertextuelle par-dessus le Web. Tout reste sur l'ordinateur, dans `~/.navigateur_maison/`.
 
 ### Raccourcis clavier
 
@@ -86,6 +85,7 @@ hypertextuelle par-dessus le Web. Tout reste sur l'ordinateur, dans `~/.navigate
 | `Ctrl+M` | Carte de navigation |
 | `Ctrl+N` | Annoter la sélection ou la page |
 | `Ctrl+I` | Analyse de la page et liens rompus |
+| `Ctrl+E` | Agent Web : explorer un site |
 
 ## Architecture
 
@@ -108,6 +108,7 @@ Une page passe par les mêmes étapes que dans un vrai navigateur :
 | `navigateur/interface.py` | Fenêtre, onglets, événements souris et clavier, dessin |
 | `navigateur/pages_internes.py` | Pages `about:accueil`, `about:historique`, `about:favoris`, `about:annotations`, `about:aide`, pages d'erreur |
 | `navigateur/stockage.py` | Enregistrement de l'historique et des favoris (JSON dans `~/.navigateur_maison/`) |
+| `navigateur/agent_web.py` | Agent Web (exploration en profondeur et en largeur) et base de données SQLite (§ 2.1, 2.2) |
 | `navigateur/reseau_personnel.py` | Réseau personnel (graphe des pages, liens personnels), annotations, export HTML, profil de page et liens d'une page |
 | `navigateur/hywebmap.py` | Fenêtres de la carte de navigation, de l'analyse de page et des annotations |
 
@@ -120,11 +121,13 @@ Grâce à ça, on peut la tester sans écran (avec une police factice dans les t
 python3 -m unittest discover -s tests -v
 ```
 
-Les 38 tests vérifient les URL, le protocole HTTP (sur un petit serveur local :
+Les 46 tests vérifient les URL, le protocole HTTP (sur un petit serveur local :
 redirections, chunked, gzip, cookies, POST), l'analyse HTML, la cascade CSS, la
 mise en page (retour à la ligne, centrage, tableaux, listes, formulaires), le
 stockage et les outils HyWebMap (graphe de navigation, typologie des nœuds,
-annotations, export, profil de page, classement des liens). Ils n'ont besoin ni d'écran ni d'Internet.
+annotations, export, profil de page, classement des liens), et les étapes de l'article : l'agent Web
+sur un petit site local (profondeur, largeur, base de données, types de nœuds et de liens), les
+nœuds libres, les règles de surveillance, les propositions, le dictionnaire et l'export en cadres. Ils n'ont besoin ni d'écran ni d'Internet.
 
 ## Limites connues
 

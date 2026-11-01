@@ -15,6 +15,7 @@ from .chargeur import charger_page, construire_page, format_image
 from .mise_en_page import (CmdImage, CmdLigne, CmdOvale, CmdRect, CmdTexte, Contexte, LayoutDocument,
                            option_choisie, options_de, valeur_champ)
 from .reseau import ClientHTTP, ErreurReseau, URL, encoder_formulaire, pourcent_decoder
+from .reseau_personnel import caracteristiques_dom
 from .stockage import Stockage
 
 NOM = "Navigateur Maison"
@@ -162,6 +163,7 @@ class Onglet:
         self.mots = []              # CmdTexte dans l'ordre du document (sélection, annotations)
         self.annotes = {}           # id(CmdTexte) -> numéro de l'annotation qui le surligne
         self.reperes = {}           # id(CmdTexte) -> numéro, sur le premier mot de chaque passage
+        self.positions_annotations = {}   # numéro -> y du passage dans la page (panneau d'annotations)
 
     # -- navigation ---------------------------------------------------------
 
@@ -264,6 +266,10 @@ class Onglet:
         self.origine = None
         self.nav.stockage.reseau.visite(str(self.url.sans_fragment()), self.titre, depuis, texte_lien,
                                         getattr(resultat, "statut", 200) or 200)
+        if self.url.schema in ("http", "https", "file"):
+            # auteur, mots-clés, date de création (balises meta) : utiles pour l'export (§ 2.10)
+            proprietes = caracteristiques_dom(resultat.dom, self.url)["proprietes"]
+            self.nav.stockage.reseau.enrichir(str(self.url.sans_fragment()), proprietes)
         self.nav.rafraichir_carte()
         self.nav.mettre_a_jour()
 
@@ -327,7 +333,7 @@ class Onglet:
     def reperer_annotations(self):
         """Retrouve dans la page les passages annotés pour les surligner (HyWebMap).
         Si la page a changé et que le passage n'existe plus, l'annotation est marquée introuvable."""
-        self.annotes, self.reperes = {}, {}
+        self.annotes, self.reperes, self.positions_annotations = {}, {}, {}
         if self.url is None or self.url.schema not in ("http", "https", "file"):
             return
         # Texte de la page sans espaces ni ponctuation, et pour chaque caractère le mot d'origine :
@@ -351,6 +357,7 @@ class Onglet:
             for commande in self.mots[debut:fin + 1]:
                 self.annotes[id(commande)] = annotation["numero"]
             self.reperes[id(self.mots[debut])] = annotation["numero"]
+            self.positions_annotations[annotation["numero"]] = self.mots[debut].y
 
     def hauteur_max(self):
         if self.document is None:
@@ -538,6 +545,10 @@ class Navigateur:
         self._largeur_precedente = None
         self._relayout_prevu = None
         self.fenetre_carte = None
+        self.fenetre_agent = None
+        self.file_outils = queue.Queue()  # résultats des agents en arrière-plan (fonctions à exécuter)
+        self._surveillance = None
+        self._panneau_masque = None       # page dont l'utilisateur a fermé le panneau d'annotations
         self.selection = None        # (début, fin) : indices dans actif.mots
         self._depart_selection = None
 
@@ -545,6 +556,7 @@ class Navigateur:
         self._raccourcis()
         self.racine.after(30, self._traiter_file)
         self.nouvel_onglet(url_initiale or pages_internes.PAGE_ACCUEIL)
+        self.programmer_surveillance()
 
     # -- construction -----------------------------------------------------------
 
@@ -598,8 +610,25 @@ class Navigateur:
         self.barre_etat = tk.Label(racine, text="", anchor="w", bg=COULEURS["etat"], fg="#444", font=("Helvetica", 11))
         self.barre_etat.pack(side="bottom", fill="x")
 
+        # Panneau des annotations de la page (HyWebMap § 2.9 : affichées en bas de l'écran)
+        self.panneau = tk.Frame(racine, bg="#eef7ee", bd=0)
+        entete = tk.Frame(self.panneau, bg="#eef7ee")
+        entete.pack(fill="x")
+        self.titre_panneau = tk.Label(entete, text="", bg="#eef7ee", fg="#2e7d32", font=("Helvetica", 11, "bold"),
+                                      anchor="w")
+        self.titre_panneau.pack(side="left", padx=6)
+        tk.Button(entete, text="✕", relief="flat", bg="#eef7ee", command=self._masquer_panneau).pack(side="right")
+        tk.Label(entete, text="clic : aller au passage", bg="#eef7ee", fg="#777",
+                 font=("Helvetica", 10)).pack(side="right", padx=6)
+        self.liste_annotations = tk.Listbox(self.panneau, height=4, bd=0, highlightthickness=0, activestyle="none",
+                                            font=("Helvetica", 11), selectbackground="#c8e6c9", selectforeground="#000")
+        self.liste_annotations.pack(fill="x", padx=6, pady=(0, 6))
+        self.liste_annotations.bind("<<ListboxSelect>>", self._aller_annotation)
+        self._numeros_panneau = []
+
         zone = tk.Frame(racine)
         zone.pack(fill="both", expand=True)
+        self.zone = zone
         self.ascenseur = tk.Scrollbar(zone, orient="vertical", command=self._defiler_barre)
         self.ascenseur.pack(side="right", fill="y")
         self.canevas = tk.Canvas(zone, bg="white", highlightthickness=0, takefocus=1)
@@ -651,6 +680,7 @@ class Navigateur:
         lier("<Control-m>", lambda e: self.ouvrir_carte())
         lier("<Control-n>", lambda e: self.annoter())
         lier("<Control-i>", lambda e: self.analyser_page())
+        lier("<Control-e>", lambda e: self.ouvrir_agent())
         lier("<Control-c>", self._copier)
 
     # -- onglets ---------------------------------------------------------------
@@ -722,6 +752,7 @@ class Navigateur:
         else:
             self._etat("")
         self.dessiner()
+        self.maj_panneau_annotations()
 
     def _dessiner_onglets(self):
         for enfant in self.barre_onglets.winfo_children():
@@ -815,6 +846,11 @@ class Navigateur:
                     onglet.recevoir(generation, resultat)
                     if onglet is not self.actif:
                         self._dessiner_onglets()
+        except queue.Empty:
+            pass
+        try:
+            while True:
+                self.file_outils.get_nowait()()
         except queue.Empty:
             pass
         self.racine.after(30, self._traiter_file)
@@ -994,10 +1030,12 @@ class Navigateur:
         menu.add_command(label="Zoom arrière\tCtrl+-", command=lambda: self.zoomer(-1))
         menu.add_command(label="Taille réelle\tCtrl+0", command=lambda: self.zoomer(0))
         menu.add_separator()
-        menu.add_command(label="Carte de navigation\tCtrl+M", command=self.ouvrir_carte)
+        menu.add_command(label="Agent Web : explorer un site\tCtrl+E", command=self.ouvrir_agent)
+        menu.add_command(label="Carte de navigation (réseau virtuel)\tCtrl+M", command=self.ouvrir_carte)
         menu.add_command(label="Annoter la page / la sélection\tCtrl+N", command=self.annoter)
         menu.add_command(label="Mes annotations", command=lambda: self.nouvel_onglet("about:annotations"))
         menu.add_command(label="Analyse de la page et liens rompus\tCtrl+I", command=self.analyser_page)
+        menu.add_command(label="Dictionnaire personnel…", command=lambda: hywebmap.FenetreDictionnaire(self))
         menu.add_command(label="Exporter mon réseau en site HTML…", command=lambda: hywebmap.exporter_reseau(self))
         menu.add_separator()
         menu.add_command(label="Aide", command=lambda: self.nouvel_onglet("about:aide"))
@@ -1145,6 +1183,72 @@ class Navigateur:
         else:
             self.fenetre_carte = hywebmap.FenetreCarte(self)
         return "break"
+
+    def ouvrir_agent(self):
+        if self.fenetre_agent is not None and hywebmap._existe(self.fenetre_agent.fenetre):
+            self.fenetre_agent.fenetre.lift()
+        else:
+            self.fenetre_agent = hywebmap.FenetreAgent(self)
+        return "break"
+
+    def programmer_surveillance(self):
+        """Agents de surveillance périodiques (§ 2.6), si l'option est cochée dans la carte."""
+        if self._surveillance is not None:
+            self.racine.after_cancel(self._surveillance)
+            self._surveillance = None
+        parametres = self.stockage.reseau.parametres
+        if parametres.get("surveillance_auto"):
+            delai = max(1, int(parametres.get("minutes_surveillance", 30))) * 60 * 1000
+
+            def tour():
+                hywebmap.surveiller_en_fond(self)
+                self._surveillance = self.racine.after(delai, tour)
+
+            self._surveillance = self.racine.after(delai, tour)
+
+    def maj_panneau_annotations(self):
+        onglet = self.actif
+        annotations = []
+        if onglet is not None and onglet.url is not None and onglet.url.schema in ("http", "https", "file"):
+            annotations = self.stockage.reseau.annotations_de(str(onglet.url.sans_fragment()))
+        adresse = str(onglet.url.sans_fragment()) if annotations else None
+        if not annotations or adresse == self._panneau_masque:
+            self.panneau.pack_forget()
+            return
+        self.titre_panneau.configure(text="Annotations de cette page (%d)" % len(annotations))
+        self.liste_annotations.delete(0, "end")
+        self._numeros_panneau = []
+        for a in annotations:
+            texte = "n° %d — %s — %s" % (a["numero"], a["date"], a["note"] or "(sans note)")
+            if a["passage"]:
+                texte += "   « %s »" % (a["passage"][:80] + ("…" if len(a["passage"]) > 80 else ""))
+            if a.get("introuvable"):
+                texte += "   (passage introuvable : la page a changé)"
+            self.liste_annotations.insert("end", texte)
+            self.liste_annotations.itemconfigure("end", fg="#999" if a.get("introuvable") else "#1b3d1d")
+            self._numeros_panneau.append(a["numero"])
+        self.liste_annotations.configure(height=min(5, len(annotations)))
+        if not self.panneau.winfo_ismapped():
+            self.panneau.pack(side="bottom", fill="x", before=self.zone)
+
+    def _masquer_panneau(self):
+        onglet = self.actif
+        self._panneau_masque = str(onglet.url.sans_fragment()) if onglet and onglet.url else None
+        self.panneau.pack_forget()
+
+    def _aller_annotation(self, evenement=None):
+        selection = self.liste_annotations.curselection()
+        onglet = self.actif
+        if not selection or onglet is None:
+            return
+        numero = self._numeros_panneau[selection[0]]
+        y = onglet.positions_annotations.get(numero)
+        if y is None:
+            self._etat("Ce passage est introuvable dans la page actuelle.")
+            return
+        onglet.defilement = y - 40
+        onglet.borner_defilement()
+        self.dessiner()
 
     def rafraichir_carte(self):
         if self.fenetre_carte is not None and self.fenetre_carte.existe():

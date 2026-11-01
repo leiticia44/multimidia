@@ -4,6 +4,7 @@ pages générées (erreurs, texte brut, source, images, téléchargements)."""
 import time
 
 from .reseau import pourcent_decoder, pourcent_encoder
+from .reseau_personnel import lier_urls
 
 MOTEUR_RECHERCHE = "https://lite.duckduckgo.com/lite/"   # moteur sans Google
 PAGE_ACCUEIL = "about:accueil"
@@ -53,8 +54,8 @@ def accueil(stockage):
 <p><a href="about:historique">Historique</a> &middot; <a href="about:favoris">Gérer les favoris</a>
 &middot; <a href="about:annotations">Mes annotations</a>
 &middot; <a href="about:aide">Aide et raccourcis clavier</a></p>
-<p class=discret>Outils inspirés de HyWebMap : carte de navigation (Ctrl+M), annotations (Ctrl+N),
-analyse de la page et liens rompus (Ctrl+I).</p>
+<p class=discret>Outils inspirés de HyWebMap : agent Web (Ctrl+E), carte du réseau virtuel (Ctrl+M),
+annotations (Ctrl+N), analyse de la page et liens rompus (Ctrl+I).</p>
 """ % (MOTEUR_RECHERCHE, favoris)
     return _page("Accueil", contenu)
 
@@ -79,29 +80,50 @@ def favoris(stockage):
     return _page("Favoris", contenu)
 
 
+def _parametres(chemin):
+    resultat = {}
+    if "?" in chemin:
+        for morceau in chemin.split("?", 1)[1].split("&"):
+            cle, _, valeur = morceau.partition("=")
+            resultat[cle] = pourcent_decoder(valeur, plus_en_espace=True)
+    return resultat
+
+
 def annotations(stockage, chemin):
+    """Recherche dans les annotations (§ 2.9) : plein texte ou par attribut, résultats
+    regroupés par document, chaque document résumé par la fusion de ses passages surlignés."""
     reseau = stockage.reseau
-    requete = ""
-    if "?q=" in chemin:
-        requete = pourcent_decoder(chemin.split("?q=", 1)[1].split("&")[0], plus_en_espace=True)
-    liste = reseau.chercher_annotations(requete) if requete else reseau.annotations
+    parametres = _parametres(chemin)
+    requete, champ = parametres.get("q", ""), parametres.get("champ", "tout")
+    liste = reseau.chercher_annotations(requete, champ) if requete else reseau.annotations
+    options = "".join('<option value="%s"%s>%s</option>' % (c, " selected" if c == champ else "", c)
+                      for c in reseau.CHAMPS)
+    synonymes = sorted(reseau.etendre(requete) - {requete.lower()}) if requete else []
     blocs = []
-    for a in reversed(liste):
-        bloc = '<div class=carte><p><b>n° %d</b> &mdash; <a href="%s">%s</a> <span class=discret>%s</span></p>' % (
-            a["numero"], echapper(a["url"]), echapper(a["titre"] or a["url"]), echapper(a["date"]))
-        if a["note"]:
-            bloc += "<p>%s</p>" % echapper(a["note"])
-        if a["passage"]:
-            bloc += "<blockquote><i>&laquo; %s &raquo;</i></blockquote>" % echapper(a["passage"])
-        if a["mots_cles"]:
-            bloc += "<p class=discret>Mots-clés : %s</p>" % echapper(", ".join(a["mots_cles"]))
-        bloc += '<p class=discret>[<a href="about:annotations?supprimer=%d">supprimer</a>]</p></div>' % a["numero"]
-        blocs.append(bloc)
+    for url, titre, notes, resume in reseau.regrouper_par_document(liste):
+        bloc = '<div class=carte><h2><a href="%s">%s</a></h2><p class=discret>%s</p>' % (
+            echapper(url), echapper(titre), echapper(url))
+        if resume:
+            bloc += "<p><b>Résumé (passages surlignés) :</b> <i>%s</i></p>" % echapper(resume)
+        for a in notes:
+            couleur = ' style="color:#999"' if a.get("introuvable") else ""
+            bloc += '<p%s><b>n° %d</b> <span class=discret>%s</span> &mdash; %s' % (
+                couleur, a["numero"], echapper(a["date"]), lier_urls(echapper(a["note"])) or "<i>(sans note)</i>")
+            if a["passage"]:
+                bloc += "<br>&laquo; %s &raquo;" % echapper(a["passage"])
+            if a["mots_cles"]:
+                bloc += "<br><span class=discret>Mots-clés : %s</span>" % echapper(", ".join(a["mots_cles"]))
+            if a.get("introuvable"):
+                bloc += "<br><span class=discret>Passage introuvable : le document a changé.</span>"
+            bloc += ' <span class=discret>[<a href="about:annotations?supprimer=%d">supprimer</a>]</span></p>' % a["numero"]
+        blocs.append(bloc + "</div>")
     contenu = """<h1>Mes annotations</h1>
-<form action="about:annotations" method=get><input name=q size=40 value="%s" placeholder="Chercher dans les notes, passages, mots-clés">
-<input type=submit value="Chercher"></form>
-<p class=discret>Sélectionnez un passage à la souris puis Ctrl+N pour annoter une page.</p>%s""" % (
-        echapper(requete), "".join(blocs) or "<p class=discret>Aucune annotation.</p>")
+<form action="about:annotations" method=get><input name=q size=34 value="%s" placeholder="Chercher (synonymes inclus)">
+<select name=champ>%s</select> <input type=submit value="Chercher"></form>
+<p class=discret>%s%d annotation(s) dans %d document(s). Sélectionnez un passage puis Ctrl+N pour annoter.</p>%s""" % (
+        echapper(requete), options,
+        ("Synonymes pris en compte : %s. " % echapper(", ".join(synonymes))) if synonymes else "",
+        len(liste), len({a["url"] for a in liste}), "".join(blocs) or "<p class=discret>Aucune annotation.</p>")
     return _page("Annotations", contenu)
 
 
@@ -119,6 +141,7 @@ def aide():
         ("Ctrl+M", "Carte de navigation (réseau personnel)"),
         ("Ctrl+N", "Annoter la sélection ou la page"),
         ("Ctrl+I", "Analyse de la page et liens rompus"),
+        ("Ctrl+E", "Agent Web : explorer un site (profondeur, largeur)"),
     ]
     lignes = "".join("<tr><td><kbd>%s</kbd></td><td>%s</td></tr>" % (echapper(t), echapper(d)) for t, d in raccourcis)
     contenu = """<h1>Aide</h1>
@@ -132,9 +155,18 @@ def aide():
 <li>Mise en page : blocs, texte avec retour à la ligne, listes, tableaux, images PNG/GIF.</li>
 <li>Formulaires GET/POST : champs texte, cases à cocher, boutons radio, listes, zones de texte.</li>
 <li>Onglets, historique, favoris, zoom, recherche dans la page, code source.</li>
-<li>Outils inspirés de HyWebMap (Saleh, Papy, Bouhaï, Paris 8) : carte de navigation avec liens
-personnels, annotations resurlignées à chaque visite, profil de page, détection des liens rompus,
-surveillance des pages du réseau, navigation par date et export du réseau en site HTML.</li>
+<li>Les étapes de l'article HyWebMap (Saleh, Papy, Bouhaï, Paris 8) :
+<ol>
+<li><b>Agent Web</b> (Ctrl+E) : explore un site en profondeur et en largeur, détecte les liens rompus ;</li>
+<li><b>Base de données</b> : nœuds, liens, ancres, profils et propriétés de chaque page (fichier hywebmap.db) ;</li>
+<li><b>Réseau virtuel</b> (Ctrl+M) : la carte du site et de vos visites, vos liens personnels ;</li>
+<li><b>Nœuds libres</b> : un nom, une ressource Web, des mots-clés, une annotation ;</li>
+<li><b>Typologie</b> : 5 types de nœuds et 7 types de liens ;</li>
+<li><b>Agents de surveillance</b> : pages disparues, avec une règle selon le type de nœud ;</li>
+<li><b>Navigation</b> par historique, par niveau, par date, et vue locale d'un nœud ;</li>
+<li><b>Annotations</b> (Ctrl+N), panneau en bas de la page, recherche par attribut, dictionnaire de synonymes ;</li>
+<li><b>Export</b> du réseau en site HTML à deux cadres.</li>
+</ol></li>
 </ul>
 <p class=discret>JavaScript n'est pas exécuté : les pages s'affichent comme avec JavaScript désactivé.</p>
 """ % lignes

@@ -104,8 +104,29 @@ def _enregistrer(url, reponse):
     return chemin
 
 
+def _sans_cadres(dom):
+    """Pages en cadres (<frameset>) : notre navigateur n'affiche pas les cadres, il fait comme un
+    navigateur « sans cadres » et montre le contenu de <noframes>, ou à défaut la liste des cadres."""
+    elements = [n for n in parcourir(dom) if isinstance(n, Element)]
+    frameset = next((n for n in elements if n.balise == "frameset"), None)
+    if frameset is None:
+        return None
+    titre = next((" ".join(n.texte_contenu().split()) for n in elements if n.balise == "title"), "")
+    tete = "<head><title>%s</title></head>" % pages_internes.echapper(titre) if titre else ""
+    noframes = next((n for n in elements if n.balise == "noframes"), None)
+    contenu = "".join(e.texte for e in noframes.enfants if isinstance(e, Texte)) if noframes is not None else ""
+    if contenu.strip():
+        return analyser_html("<html>%s%s</html>" % (tete, contenu))
+    cadres = "".join('<li><a href="%s">%s</a></li>' % (pages_internes.echapper(n.attributs.get("src", "")),
+                                                       pages_internes.echapper(n.attributs.get("name") or n.attributs.get("src", "")))
+                     for n in elements if n.balise == "frame" and n.attributs.get("src"))
+    return analyser_html("<html>%s<body><p>Cette page est composée de cadres. Ouvrir un cadre :</p><ul>%s</ul>"
+                         "</body></html>" % (tete, cadres))
+
+
 def construire_page(client, url, html, annule, ressources=True):
     dom = analyser_html(html)
+    dom = _sans_cadres(dom) or dom
     base = url
     noeuds = parcourir(dom)
     for noeud in noeuds:
