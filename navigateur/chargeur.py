@@ -244,3 +244,39 @@ def _imports(client, url, feuille, annule):
             pass
     feuille.imports = []
     return compte
+
+
+def sans_redirection(adresse):
+    """Les liens de résultats de DuckDuckGo (et d'autres moteurs) passent par une page de
+    redirection qui a besoin de JavaScript : on va directement à l'adresse écrite dans le lien."""
+    try:
+        url = URL(adresse)
+    except ValueError:
+        return adresse
+    if url.schema in ("http", "https") and url.hote.endswith("duckduckgo.com") and url.chemin.startswith("/l/"):
+        for morceau in url.chemin.split("?", 1)[-1].split("&"):
+            cle, _, valeur = morceau.partition("=")
+            if cle == "uddg" and valeur:
+                return pourcent_decoder(valeur)
+    return adresse
+
+
+def rafraichissement(page):
+    """Adresse d'une redirection <meta http-equiv="refresh" content="N; url=…"> (N ≤ 5 s), sinon None."""
+    for noeud in parcourir(page.dom):
+        if not (isinstance(noeud, Element) and noeud.balise == "meta"):
+            continue
+        if noeud.attributs.get("http-equiv", "").lower() != "refresh":
+            continue
+        contenu = noeud.attributs.get("content", "")
+        delai, _, reste = contenu.partition(";")
+        reste = reste.strip()
+        if reste.lower().startswith("url"):
+            reste = reste[3:].lstrip(" =").strip("'\" ")
+        try:
+            if not reste or float(delai.strip() or 0) > 5:
+                return None
+            return str(page.url.resoudre(reste))
+        except ValueError:
+            return None
+    return None

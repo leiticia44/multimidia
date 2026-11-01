@@ -11,7 +11,7 @@ import tkinter.font as tkfont
 
 from . import hywebmap, pages_internes
 from .analyseur_html import Element, ancetre, parcourir
-from .chargeur import charger_page, construire_page, format_image
+from .chargeur import charger_page, construire_page, format_image, rafraichissement, sans_redirection
 from .mise_en_page import (CmdImage, CmdLigne, CmdOvale, CmdRect, CmdTexte, Contexte, LayoutDocument,
                            option_choisie, options_de, valeur_champ)
 from .reseau import ClientHTTP, ErreurReseau, URL, encoder_formulaire, pourcent_decoder
@@ -160,6 +160,7 @@ class Onglet:
         self.fond = "#ffffff"
         self.erreur = None
         self.origine = None         # (page de départ, texte du lien) pour la carte de navigation
+        self._redirections = 0      # redirections <meta refresh> successives (pour éviter les boucles)
         self.mots = []              # CmdTexte dans l'ordre du document (sélection, annotations)
         self.annotes = {}           # id(CmdTexte) -> numéro de l'annotation qui le surligne
         self.reperes = {}           # id(CmdTexte) -> numéro, sur le premier mot de chaque passage
@@ -168,6 +169,7 @@ class Onglet:
     # -- navigation ---------------------------------------------------------
 
     def naviguer(self, adresse, corps=None, ajouter=True, referent=None):
+        adresse = sans_redirection(str(adresse)) if corps is None else adresse
         try:
             url = URL(adresse) if not isinstance(adresse, URL) else adresse
         except ValueError as erreur:
@@ -250,6 +252,15 @@ class Onglet:
             url = self.url
             self._afficher_html(pages_internes.erreur(str(url), str(resultat)), str(url), garder_url=True)
             return
+        cible = rafraichissement(resultat)
+        if cible and self._redirections < 5:
+            # <meta http-equiv="refresh" content="0; url=…"> : la page demande d'aller ailleurs
+            self._redirections += 1
+            if self.index >= 0:
+                self.historique[self.index] = (cible, None)
+            self._charger(URL(cible))
+            return
+        self._redirections = 0
         self.page = resultat
         self.url = resultat.url
         if self.index >= 0:

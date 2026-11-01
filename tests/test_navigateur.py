@@ -627,5 +627,22 @@ class TestReseauVirtuel(unittest.TestCase):
         self.assertLess(fiche.index("Type de nœud"), fiche.index("Annotations personnelles"))
 
 
+
+class TestRedirections(unittest.TestCase):
+    def test_lien_de_resultat_duckduckgo(self):
+        from navigateur.chargeur import sans_redirection
+        self.assertEqual(sans_redirection("https://duckduckgo.com/l/?uddg=https%3A%2F%2Ffr.vikidia.org%2Fwiki%2FHyperlien"
+                                          "&rut=8612d1"), "https://fr.vikidia.org/wiki/Hyperlien")
+        self.assertEqual(sans_redirection("https://fr.wikipedia.org/wiki/X"), "https://fr.wikipedia.org/wiki/X")
+
+    def test_meta_refresh(self):
+        from navigateur.chargeur import construire_page, rafraichissement
+        page = construire_page(None, URL("https://a.fr/x/"), '<meta http-equiv="Refresh" content="0; URL=\'/cible?a=1\'">',
+                               lambda: False, ressources=False)
+        self.assertEqual(rafraichissement(page), "https://a.fr/cible?a=1")
+        lente = construire_page(None, URL("https://a.fr/"), '<meta http-equiv="refresh" content="30; url=/b">',
+                                lambda: False, ressources=False)
+        self.assertIsNone(rafraichissement(lente))
+
 if __name__ == "__main__":
     unittest.main()
