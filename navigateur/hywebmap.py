@@ -107,7 +107,7 @@ class FenetreAgent:
         self._arret = False
         w = self.fenetre = tk.Toplevel(nav.racine)
         w.title("Agent Web — exploration et analyse d'un site")
-        w.geometry("1060x680")
+        w.geometry("1060x600")
 
         haut = ttk.Frame(w, padding=8)
         haut.pack(fill="x")
@@ -141,6 +141,7 @@ class FenetreAgent:
         self.bouton_lancer = ttk.Button(boutons, text="Lancer l'agent", command=self.lancer)
         self.bouton_lancer.pack(fill="x")
         ttk.Button(boutons, text="Arrêter", command=self.arreter).pack(fill="x", pady=4)
+        ttk.Button(boutons, text="Voir sur la carte", command=self.ajouter_au_reseau).pack(fill="x")
         haut.columnconfigure(1, weight=1)
 
         self.estimation = ttk.Label(w, padding=(10, 0), foreground="#555")
@@ -159,6 +160,13 @@ class FenetreAgent:
         self.liste.bind("<<ComboboxSelected>>", lambda e: self._choisir())
         ttk.Button(choix, text="Supprimer", command=self._supprimer).pack(side="left")
 
+        # Barre du bas placée AVANT le tableau : elle reste visible même si la fenêtre est petite.
+        bas = ttk.Frame(w, padding=8)
+        bas.pack(side="bottom", fill="x")
+        ttk.Button(bas, text="Ajouter au réseau virtuel et ouvrir la carte",
+                   command=self.ajouter_au_reseau).pack(side="left")
+        ttk.Label(bas, text="Double-clic sur une ligne : ouvrir la page.", foreground="#777").pack(side="left", padx=10)
+
         carnet = ttk.Notebook(w)
         carnet.pack(fill="both", expand=True, padx=8, pady=6)
         self.table_noeuds = self._table(carnet, "Nœuds", (
@@ -176,19 +184,13 @@ class FenetreAgent:
             table.tag_configure("non", foreground="#888")
             table.bind("<Double-1>", lambda e, t=table: self._ouvrir(t))
 
-        bas = ttk.Frame(w, padding=8)
-        bas.pack(fill="x")
-        ttk.Button(bas, text="Ajouter au réseau virtuel et ouvrir la carte",
-                   command=self.ajouter_au_reseau).pack(side="right")
-        ttk.Label(bas, text="Double-clic sur une ligne : ouvrir la page. Base : %s" % self.base.chemin,
-                  foreground="#777").pack(side="left")
         self._remplir_liste()
         w.protocol("WM_DELETE_WINDOW", self._fermer)
 
     def _table(self, carnet, titre, colonnes):
         cadre = ttk.Frame(carnet)
         carnet.add(cadre, text=titre)
-        table = ttk.Treeview(cadre, columns=[c for c, _, _ in colonnes], show="headings")
+        table = ttk.Treeview(cadre, columns=[c for c, _, _ in colonnes], show="headings", height=10)
         for c, texte, largeur in colonnes:
             table.heading(c, text=texte)
             table.column(c, width=largeur, stretch=c in ("titre", "url", "de", "vers", "texte"))
