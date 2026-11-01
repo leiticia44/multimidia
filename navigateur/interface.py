@@ -455,7 +455,11 @@ class Onglet:
                 self.soumettre(formulaire, noeud)
             return
         else:
-            self.champ_actif = noeud
+            # Champ de texte : on pose une vraie zone de saisie Tk par-dessus (clavier de Windows,
+            # accents, AltGr, copier-coller… fonctionnent comme dans la barre d'adresse).
+            self.champ_actif = None
+            self.nav.editer_champ(self, noeud)
+            return
         self.peindre()
         self.nav.dessiner()
 
@@ -554,6 +558,7 @@ class Navigateur:
         self._panneau_masque = None       # page dont l'utilisateur a fermé le panneau d'annotations
         self.selection = None        # (début, fin) : indices dans actif.mots
         self._depart_selection = None
+        self.editeur = None          # (zone de saisie Tk, nœud du champ, onglet) pendant une saisie
 
         self._construire_interface()
         self._raccourcis()
@@ -717,6 +722,7 @@ class Navigateur:
         self.mettre_a_jour()
 
     def activer(self, onglet):
+        self.valider_editeur()
         self.actif = onglet
         self.selection = None
         self._relayout_si_necessaire()
@@ -838,6 +844,7 @@ class Navigateur:
             self.ascenseur.set(haut / total, min(1.0, bas / total))
         else:
             self.ascenseur.set(0, 1)
+        self._placer_editeur()
 
     # -- évènements -----------------------------------------------------------
 
@@ -920,6 +927,7 @@ class Navigateur:
         return None
 
     def _clic(self, evenement, nouvel_onglet=False):
+        self.valider_editeur()
         self.canevas.focus_set()
         onglet = self.actif
         zone = self._zone_a(evenement.x, evenement.y)
@@ -937,6 +945,94 @@ class Navigateur:
             self.suivre_lien(zone.noeud, nouvel_onglet or bool(evenement.state & 0x4))
         elif zone.genre == "champ":
             onglet.activer_champ(zone.noeud, evenement.x_root, evenement.y_root)
+
+    # -- saisie dans les champs de formulaire ------------------------------------
+
+    def editer_champ(self, onglet, noeud):
+        self.valider_editeur()
+        est_zone = noeud.balise == "textarea"
+        genre = noeud.attributs.get("type", "text").lower()
+        police = ("Helvetica", max(9, int(11 * onglet.zoom)))
+        if est_zone:
+            widget = tk.Text(self.canevas, wrap="word", font=police, bd=1, relief="solid",
+                             highlightthickness=2, highlightcolor="#4a7bd8", undo=True)
+            widget.insert("1.0", valeur_champ(noeud))
+        else:
+            widget = tk.Entry(self.canevas, font=police, bd=1, relief="solid", highlightthickness=2,
+                              highlightcolor="#4a7bd8", show="•" if genre == "password" else "")
+            widget.insert(0, valeur_champ(noeud))
+            widget.icursor("end")
+            widget.bind("<Return>", lambda e: (self._entree_champ(), "break")[1])
+            widget.bind("<KP_Enter>", lambda e: (self._entree_champ(), "break")[1])
+        widget.bind("<Escape>", lambda e: (self.valider_editeur(), self.canevas.focus_set(), "break")[2])
+        widget.bind("<Tab>", lambda e: (self._champ_suivant_editeur(), "break")[1])
+        widget.bind("<FocusOut>", lambda e: self.racine.after(10, self._focus_perdu))
+        self.editeur = (widget, noeud, onglet)
+        self._placer_editeur()
+        widget.focus_set()
+
+    def _zone_du_champ(self, onglet, noeud):
+        return next((z for z in onglet.zones if z.genre == "champ" and z.noeud is noeud), None)
+
+    def _placer_editeur(self):
+        if self.editeur is None:
+            return
+        widget, noeud, onglet = self.editeur
+        zone = self._zone_du_champ(onglet, noeud) if onglet is self.actif else None
+        if zone is None:
+            self.canevas.delete("editeur")
+            return
+        self.canevas.delete("editeur")
+        self.canevas.create_window(zone.x1, zone.y1 - onglet.defilement, anchor="nw", window=widget,
+                                   width=max(40, zone.x2 - zone.x1), height=max(18, zone.y2 - zone.y1),
+                                   tags=("editeur",))
+
+    def valider_editeur(self):
+        """Recopie dans la page le texte tapé, puis retire la zone de saisie."""
+        if self.editeur is None:
+            return
+        widget, noeud, onglet = self.editeur
+        self.editeur = None
+        try:
+            if noeud.balise == "textarea":
+                noeud.attributs["_valeur"] = widget.get("1.0", "end-1c")
+            else:
+                noeud.attributs["value"] = widget.get()
+            widget.destroy()
+        except tk.TclError:
+            pass
+        self.canevas.delete("editeur")
+        if onglet in self.onglets:
+            onglet.peindre()
+            if onglet is self.actif:
+                self.dessiner()
+
+    def _focus_perdu(self):
+        if self.editeur is None:
+            return
+        try:
+            courant = self.racine.focus_get()
+        except (KeyError, tk.TclError):
+            courant = None
+        if courant is not self.editeur[0]:
+            self.valider_editeur()
+
+    def _entree_champ(self):
+        widget, noeud, onglet = self.editeur
+        self.valider_editeur()
+        formulaire = ancetre(noeud, "form")
+        if formulaire is not None:
+            onglet.soumettre(formulaire)
+
+    def _champ_suivant_editeur(self):
+        widget, noeud, onglet = self.editeur
+        self.valider_editeur()
+        champs = [z.noeud for z in onglet.zones if z.genre == "champ"
+                  and (z.noeud.balise == "textarea" or (z.noeud.balise == "input" and
+                       z.noeud.attributs.get("type", "text").lower() in ("text", "search", "email", "url",
+                                                                          "password", "tel", "number")))]
+        if noeud in champs and len(champs) > 1:
+            self.editer_champ(onglet, champs[(champs.index(noeud) + 1) % len(champs)])
 
     def suivre_lien(self, lien, nouvel_onglet=False):
         onglet = self.actif
