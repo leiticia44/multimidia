@@ -540,6 +540,18 @@ class TestAgentWeb(unittest.TestCase):
 class TestReseauVirtuel(unittest.TestCase):
     """§ 2.5 à 2.9 : nœuds libres, surveillance, propositions, annotations, export."""
 
+    def test_moteurs_ignores_et_vider(self):
+        with tempfile.TemporaryDirectory() as dossier:
+            reseau = Stockage(dossier).reseau
+            reseau.visite("https://lite.duckduckgo.com/lite/?q=x", "DuckDuckGo")
+            reseau.visite("https://www.mojeek.com/search?q=x", "Captcha")
+            reseau.visite("https://a.fr/", "A")
+            self.assertEqual(list(reseau.noeuds), ["https://a.fr/"])
+            reseau.annoter("https://a.fr/", "A", "", "garder", "")
+            reseau.vider()
+            self.assertEqual((reseau.noeuds, reseau.liens, reseau.racine), ({}, [], None))
+            self.assertEqual(len(reseau.annotations), 1)
+
     def test_noeud_libre_et_ressource(self):
         with tempfile.TemporaryDirectory() as dossier:
             reseau = Stockage(dossier).reseau

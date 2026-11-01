@@ -635,6 +635,7 @@ class FenetreCarte:
         ttk.Button(barre, text="Filtrer", command=self.redessiner).pack(side="left", padx=3)
         ttk.Button(barre, text="Tout afficher", command=self._tout).pack(side="left")
         ttk.Button(barre, text="Exporter en HTML", command=lambda: exporter_reseau(nav, w)).pack(side="right")
+        ttk.Button(barre, text="Vider le réseau", command=self._vider).pack(side="right", padx=4)
 
         barre2 = ttk.Frame(w, padding=6)
         barre2.pack(fill="x")
@@ -682,6 +683,13 @@ class FenetreCarte:
         self.centre = None
         self.niveau.set("")
         self.redessiner()
+
+    def _vider(self):
+        if messagebox.askyesno("Vider le réseau", "Retirer toutes les pages et tous les liens de la carte ?\n\n"
+                               "Vos annotations, votre dictionnaire et la base de l'agent sont conservés.",
+                               parent=self.fenetre):
+            self.reseau.vider()
+            self._tout()
 
     def _annuler(self):
         self.lien_depuis = None

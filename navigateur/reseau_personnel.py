@@ -31,6 +31,9 @@ def maintenant():
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
 
+HOTES_IGNORES = ("duckduckgo.com", "mojeek.com")
+
+
 def _liste(texte):
     if isinstance(texte, list):
         return texte
@@ -98,6 +101,8 @@ class ReseauPersonnel:
         """Enregistre une visite et met à jour le graphe de navigation."""
         if url.startswith(("about:", "view-source:", "data:")):
             return
+        if any(_hote(url).endswith(h) for h in HOTES_IGNORES):
+            return    # pages de moteurs de recherche, captchas, redirections : pas des documents du réseau
         self.historique.append({"url": url, "titre": titre, "date": maintenant()})
         n = self.noeuds.get(url)
         if n is None:
@@ -368,6 +373,11 @@ class ReseauPersonnel:
             if mot in synonymes:
                 termes |= {cle} | set(synonymes)
         return termes
+
+    def vider(self):
+        """Repart d'un réseau vide (les annotations, le dictionnaire et les réglages sont gardés)."""
+        self.noeuds, self.liens, self.historique, self.racine = {}, [], [], None
+        self.enregistrer()
 
     def supprimer_noeud(self, url):
         self.noeuds.pop(url, None)
