@@ -5,7 +5,7 @@ Chaque fenêtre suit une étape de l'article :
 * FenetreAgent        § 2.1-2.2  agent Web paramétrable (profondeur, largeur) et base de données
 * FenetreCarte        § 2.3-2.8  réseau virtuel : liens personnels, nœuds libres, typologie,
                                  agents de surveillance, navigation par niveau, par date, locale
-* FenetreRecherche    § 2.6      méta-recherche (Copernic dans l'article, DuckDuckGo ici) :
+* FenetreRecherche    § 2.6      méta-recherche (Copernic dans l'article ; ici Mojeek, Wikipédia, DuckDuckGo) :
                                  remplacer un nœud disparu, propositions « NP » de l'agent de profil
 * FenetreAnnotation   § 2.9      annoter un passage, une page ou un nœud
 * FenetreDictionnaire § 2.9      dictionnaire personnel de mots-clés et de synonymes
@@ -469,7 +469,7 @@ class FenetreRecherche:
         if cible:
             titre_cible = self.reseau.noeuds.get(cible, {}).get("titre") or cible
             ttk.Label(cadre, text="Nœud : %s" % titre_cible, font=(POLICE, 11, "bold")).pack(anchor="w")
-        ttk.Label(cadre, text="Mots-clés : %s — méta-recherche DuckDuckGo, 3 premières pages par mot-clé."
+        ttk.Label(cadre, text="Mots-clés : %s — méta-recherche (Mojeek, Wikipédia ou DuckDuckGo), 3 premières pages par mot-clé."
                   % ", ".join(mots_cles), foreground="#555").pack(anchor="w", pady=(0, 6))
         self.etat = ttk.Label(cadre, text="Recherche en cours…", foreground=ROUGE)
         self.etat.pack(anchor="w")

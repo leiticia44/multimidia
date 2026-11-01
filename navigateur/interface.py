@@ -199,6 +199,10 @@ class Onglet:
             self.nav.stockage.effacer_historique()
             self.naviguer("about:historique", ajouter=False)
             return True
+        if chemin.startswith("moteur?"):
+            self.nav.changer_moteur(chemin.split("?", 1)[1])
+            self.naviguer(pages_internes.PAGE_ACCUEIL, ajouter=False)
+            return True
         if chemin.startswith("annotations?supprimer="):
             numero = chemin.split("=", 1)[1]
             if numero.isdigit():
@@ -560,6 +564,7 @@ class Navigateur:
         self._depart_selection = None
         self.editeur = None          # (zone de saisie Tk, nœud du champ, onglet) pendant une saisie
 
+        pages_internes.choisir_moteur(self.stockage.reseau.parametres.get("moteur", "mojeek"))
         self._construire_interface()
         self._raccourcis()
         self.racine.after(30, self._traiter_file)
@@ -1137,6 +1142,11 @@ class Navigateur:
         menu.add_command(label="Dictionnaire personnel…", command=lambda: hywebmap.FenetreDictionnaire(self))
         menu.add_command(label="Exporter mon réseau en site HTML…", command=lambda: hywebmap.exporter_reseau(self))
         menu.add_separator()
+        moteurs = tk.Menu(menu, tearoff=0)
+        choix = tk.StringVar(value=pages_internes.moteur_actif)
+        for cle, (nom, _, _) in pages_internes.MOTEURS.items():
+            moteurs.add_radiobutton(label=nom, value=cle, variable=choix, command=lambda c=cle: self.changer_moteur(c))
+        menu.add_cascade(label="Moteur de recherche", menu=moteurs)
         menu.add_command(label="Aide", command=lambda: self.nouvel_onglet("about:aide"))
         menu.add_command(label="Quitter", command=self.racine.destroy)
         x = self.bouton_menu.winfo_rootx()
@@ -1282,6 +1292,13 @@ class Navigateur:
         else:
             self.fenetre_carte = hywebmap.FenetreCarte(self)
         return "break"
+
+    def changer_moteur(self, cle):
+        if cle in pages_internes.MOTEURS:
+            pages_internes.choisir_moteur(cle)
+            self.stockage.reseau.parametres["moteur"] = cle
+            self.stockage.reseau.enregistrer()
+            self._etat("Moteur de recherche : %s" % pages_internes.MOTEURS[cle][0])
 
     def ouvrir_agent(self):
         if self.fenetre_agent is not None and hywebmap._existe(self.fenetre_agent.fenetre):

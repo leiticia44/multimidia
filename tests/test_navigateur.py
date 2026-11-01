@@ -352,7 +352,7 @@ class TestPagesInternes(unittest.TestCase):
             page = charger_page(ClientHTTP(), URL("about:accueil"), stockage=Stockage(dossier))
         self.assertEqual(page.titre, "Accueil")
         formulaire = element(page.dom, "form")
-        self.assertIn("duckduckgo", formulaire.attributs["action"])
+        self.assertIn("mojeek", formulaire.attributs["action"])
         self.assertNotIn("google", formulaire.attributs["action"])
 
     def test_annotations(self):
@@ -590,6 +590,16 @@ class TestReseauVirtuel(unittest.TestCase):
                 '<a class="result-link" href="https://www.w3.org/">W3C</a>')
         self.assertEqual(analyser_resultats(html, URL("https://lite.duckduckgo.com/lite/")),
                          [("Hypertexte", "https://fr.wikipedia.org/wiki/Hypertexte"), ("W3C", "https://www.w3.org/")])
+        mojeek = ('<ul class="results-standard"><li><a class="ob" href="https://a.fr/">a.fr</a>'
+                  '<h2><a class="title" href="https://a.fr/">Page A</a></h2><p class="s">extrait</p></li>'
+                  '<li><h2><a class="title" href="https://b.fr/x">Page B</a></h2></li></ul>'
+                  '<a href="https://www.mojeek.com/about">À propos</a>')
+        self.assertEqual(analyser_resultats(mojeek, URL("https://www.mojeek.com/search?q=x")),
+                         [("Page A", "https://a.fr/"), ("Page B", "https://b.fr/x")])
+        wiki = ('<ul class="mw-search-results"><li><div class="mw-search-result-heading">'
+                '<a href="/wiki/Hypertexte" title="Hypertexte">Hypertexte</a></div></li></ul><a href="/wiki/Aide">Aide</a>')
+        self.assertEqual(analyser_resultats(wiki, URL("https://fr.wikipedia.org/w/index.php?search=x")),
+                         [("Hypertexte", "https://fr.wikipedia.org/wiki/Hypertexte")])
 
     def test_export_deux_cadres(self):
         with tempfile.TemporaryDirectory() as dossier:

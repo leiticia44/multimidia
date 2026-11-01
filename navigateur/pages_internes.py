@@ -6,7 +6,23 @@ import time
 from .reseau import pourcent_decoder, pourcent_encoder
 from .reseau_personnel import lier_urls
 
-MOTEUR_RECHERCHE = "https://lite.duckduckgo.com/lite/"   # moteur sans Google
+# Moteurs de recherche proposés (aucun n'est Google) : nom affiché, adresse, nom du paramètre.
+MOTEURS = {
+    "mojeek": ("Mojeek", "https://www.mojeek.com/search", "q"),
+    "wikipedia": ("Wikipédia", "https://fr.wikipedia.org/w/index.php", "search"),
+    "duckduckgo": ("DuckDuckGo", "https://lite.duckduckgo.com/lite/", "q"),
+}
+moteur_actif = "mojeek"   # Mojeek par défaut : DuckDuckGo demande un test anti-robot en JavaScript
+
+
+def choisir_moteur(cle):
+    global moteur_actif
+    if cle in MOTEURS:
+        moteur_actif = cle
+
+
+def moteur():
+    return MOTEURS[moteur_actif]
 PAGE_ACCUEIL = "about:accueil"
 
 STYLE = """
@@ -33,8 +49,9 @@ def _page(titre, contenu):
             "<body><div class=page>%s</div></body></html>" % (echapper(titre), STYLE, contenu))
 
 
-def url_recherche(requete):
-    return MOTEUR_RECHERCHE + "?q=" + pourcent_encoder(requete).replace("%20", "+")
+def url_recherche(requete, cle=None):
+    nom, adresse, parametre = MOTEURS[cle or moteur_actif]
+    return adresse + "?" + parametre + "=" + pourcent_encoder(requete).replace("%20", "+")
 
 
 def accueil(stockage):
@@ -45,8 +62,9 @@ def accueil(stockage):
 <p class="centre discret">Un navigateur écrit entièrement à la main en Python &mdash; sans aucune API Google.</p>
 <div class="carte centre">
 <form action="%s" method=get>
-<input name=q size=40 placeholder="Rechercher sur le Web (DuckDuckGo)"> <input type=submit value="Rechercher">
+<input name=%s size=40 placeholder="Rechercher sur le Web (%s)"> <input type=submit value="Rechercher">
 </form>
+<p class=discret>Moteur : %s &mdash; changer : %s</p>
 </div>
 <h2>Favoris</h2>
 <ul>%s</ul>
@@ -56,7 +74,9 @@ def accueil(stockage):
 &middot; <a href="about:aide">Aide et raccourcis clavier</a></p>
 <p class=discret>Outils inspirés de HyWebMap : agent Web (Ctrl+E), carte du réseau virtuel (Ctrl+M),
 annotations (Ctrl+N), analyse de la page et liens rompus (Ctrl+I).</p>
-""" % (MOTEUR_RECHERCHE, favoris)
+""" % (moteur()[1], moteur()[2], moteur()[0], moteur()[0], " &middot; ".join(
+        '<a href="about:moteur?%s">%s</a>' % (cle, nom) for cle, (nom, _, _) in MOTEURS.items() if cle != moteur_actif),
+        favoris)
     return _page("Accueil", contenu)
 
 

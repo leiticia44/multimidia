@@ -671,28 +671,56 @@ def liens_page(page, url):
 
 
 # ---------------------------------------------------------------------------
-# Méta-recherche (HyWebMap utilisait le méta-chercheur Copernic ; ici DuckDuckGo, sans Google)
+# Méta-recherche (HyWebMap utilisait le méta-chercheur Copernic, qui n'existe plus).
+# Ici : Mojeek, puis Wikipédia, puis DuckDuckGo si un moteur ne répond pas. Jamais Google.
 # ---------------------------------------------------------------------------
 
-MOTEUR_META = "https://lite.duckduckgo.com/lite/"
+MOTEURS_META = (
+    ("Mojeek", "https://www.mojeek.com/search?q="),
+    ("Wikipédia", "https://fr.wikipedia.org/w/index.php?fulltext=1&search="),
+    ("DuckDuckGo", "https://lite.duckduckgo.com/lite/?q="),
+)
 
 
 def meta_recherche(client, requete, nombre=3):
-    """Les ``nombre`` premières pages trouvées pour ``requete`` : [(titre, adresse)]."""
-    url = URL(MOTEUR_META + "?q=" + pourcent_encoder(requete).replace("%20", "+"))
-    reponse = client.charger(url)
-    return analyser_resultats(reponse.texte(), reponse.url)[:nombre]
+    """Les ``nombre`` premières pages trouvées pour ``requete`` : [(titre, adresse)].
+    Si un moteur refuse ou ne donne rien (test anti-robot…), on passe au suivant."""
+    derniere_erreur = None
+    for nom, adresse in MOTEURS_META:
+        try:
+            reponse = client.charger(URL(adresse + pourcent_encoder(requete).replace("%20", "+")))
+        except (ErreurReseau, ValueError, OSError) as erreur:
+            derniere_erreur = erreur
+            continue
+        if reponse.statut >= 400:
+            continue
+        resultats = analyser_resultats(reponse.texte(), reponse.url)
+        if resultats:
+            return resultats[:nombre]
+    if derniere_erreur is not None:
+        raise ErreurReseau("Aucun moteur n'a répondu (%s)" % derniere_erreur)
+    return []
 
 
 def analyser_resultats(html, base):
-    """Extrait les résultats d'une page de résultats DuckDuckGo (version « lite » ou « html »)."""
+    """Extrait les résultats d'une page de résultats Mojeek, Wikipédia ou DuckDuckGo."""
+    hote = base.hote
     resultats, vus = [], set()
     for n in parcourir(analyser_html(html)):
         if not (isinstance(n, Element) and n.balise == "a" and n.attributs.get("href")):
             continue
         href = n.attributs["href"]
-        classes = n.attributs.get("class", "")
-        if "uddg=" in href:
+        classes = n.attributs.get("class", "").split()
+        parent = n.parent if isinstance(n.parent, Element) else None
+        if "mojeek" in hote:
+            # Mojeek : <ul class="results-standard"><li><h2><a class="title" href="…">Titre</a></h2>
+            if not ("title" in classes and parent is not None and parent.balise == "h2"):
+                continue
+        elif "wikipedia" in hote:
+            # Wikipédia : <div class="mw-search-result-heading"><a href="/wiki/…" title="…">
+            if not (parent is not None and "mw-search-result-heading" in parent.attributs.get("class", "")):
+                continue
+        elif "uddg=" in href:
             href = pourcent_decoder(href.split("uddg=", 1)[1].split("&", 1)[0])
         elif "result-link" not in classes and "result__a" not in classes:
             continue
@@ -700,7 +728,8 @@ def analyser_resultats(html, base):
             adresse = str(base.resoudre(href))
         except ValueError:
             continue
-        if not adresse.startswith(("http://", "https://")) or "duckduckgo.com" in adresse.split("/")[2]:
+        domaine = adresse.split("/")[2] if adresse.count("/") >= 2 else ""
+        if not adresse.startswith(("http://", "https://")) or "duckduckgo.com" in domaine or "mojeek.com" in domaine:
             continue
         if adresse not in vus:
             vus.add(adresse)
