@@ -648,6 +648,7 @@ def caracteristiques_dom(dom, url, base=None):
                        "date_creation": meta(*META_DATES)},
         "liens": liens,
         "contenu": contenu,   # pour chaque lien : True s'il est dans le texte de la page (pas dans un menu)
+        "texte": texte,       # texte visible de la page
         "autres": {"styles": compte("style") + sum(1 for n in elements if n.balise == "link"
                                                    and "stylesheet" in n.attributs.get("rel", "").lower()),
                    "tableaux": compte("table"), "formulaires": compte("form"),
@@ -679,6 +680,12 @@ def profil_page(page, url, reseau=None):
         ("Code HTTP", getattr(page, "statut", "—")),
         ("Type de nœud (réseau)", reseau.type_noeud(adresse) if reseau and adresse in reseau.noeuds else "—"),
     ]
+
+
+def texte_visible(dom):
+    """Texte lisible d'une page (sans scripts ni styles)."""
+    corps = next((n for n in parcourir(dom) if isinstance(n, Element) and n.balise == "body"), dom)
+    return " ".join(_texte_visible(corps).split())
 
 
 def _texte_visible(noeud):

@@ -62,6 +62,23 @@ en liste et des favoris rangés en dossiers ne suffisent pas pour s'y retrouver.
 | **§ 2.9 Annotations** : passage surligné, note (texte et liens), date, numéro, mots-clés ; annotations affichées en bas de l'écran, clic → aller au passage ; en gris si le passage a disparu ; recherche plein texte ou par attribut, groupée par document avec un résumé ; dictionnaire personnel | Sélection à la souris puis `Ctrl+N`. **Panneau des annotations** en bas de la page. `about:annotations` : recherche par champ (date, titre, URL, passage, note, mots-clés), regroupement par document et résumé des passages. *Dictionnaire* : synonymes pris en compte dans la recherche | `interface.py`, `pages_internes.py` |
 | **§ 2.10 Génération d'un site Web** : le réseau en HTML, deux cadres (navigation à gauche, profil de la page à droite), annotations en bas | *Exporter en HTML* : page d'entrée en deux cadres + un dossier avec la navigation et une fiche par nœud (nom du réseau, titre, URL, mots-clés, auteur, date de création, liens typés, annotations) | `reseau_personnel.py` |
 
+### Lien avec l'article « Systèmes de recommandation »
+
+Le navigateur applique aussi le **filtrage basé sur le contenu** décrit par Kembellec, Chevalier et
+Dudognon (Techniques de l'Ingénieur, H7245, 2015, § 3). Menu ☰ › *Pages recommandées pour moi*, ou
+bouton *Recommandations…* de la carte :
+
+1. le texte des pages visitées et des pages explorées par l'agent est gardé dans la base (table `contenu`) ;
+2. le **profil** de l'usager est fait de ce qu'il a annoté : passages surlignés, notes, mots-clés et texte
+   des pages annotées, avec des poids (les mots-clés comptent le plus) ;
+3. chaque page est représentée par un vecteur de mots pondérés par **TF-IDF** ;
+4. les pages sont classées par **similarité cosinus** avec le profil, et la fenêtre affiche les **mots en
+   commun** qui expliquent chaque recommandation.
+
+Comme le dit l'article, cette méthode ne dépend pas des autres usagers, mais elle risque la
+**surspécialisation** : elle propose des pages proches de ce qu'on connaît déjà. Le filtrage collaboratif
+(corrélation de Pearson entre usagers) demanderait les notes de plusieurs usagers. Code : `recommandation.py`.
+
 Comme le disent les auteurs en citant Pierre Lévy, ces outils font du **lecteur un auteur** :
 en nommant les liens, en ajoutant les siens et en annotant, il construit sa propre structure
 hypertextuelle par-dessus le Web. Tout reste sur l'ordinateur, dans `~/.navigateur_maison/`.
@@ -108,6 +125,7 @@ Une page passe par les mêmes étapes que dans un vrai navigateur :
 | `navigateur/interface.py` | Fenêtre, onglets, événements souris et clavier, dessin |
 | `navigateur/pages_internes.py` | Pages `about:accueil`, `about:historique`, `about:favoris`, `about:annotations`, `about:aide`, pages d'erreur |
 | `navigateur/stockage.py` | Enregistrement de l'historique et des favoris (JSON dans `~/.navigateur_maison/`) |
+| `navigateur/recommandation.py` | Recommandation par le contenu : TF-IDF et similarité cosinus |
 | `navigateur/agent_web.py` | Agent Web (exploration en profondeur et en largeur) et base de données SQLite (§ 2.1, 2.2) |
 | `navigateur/reseau_personnel.py` | Réseau personnel (graphe des pages, liens personnels), annotations, export HTML, profil de page et liens d'une page |
 | `navigateur/hywebmap.py` | Fenêtres de la carte de navigation, de l'analyse de page et des annotations |
@@ -121,7 +139,7 @@ Grâce à ça, on peut la tester sans écran (avec une police factice dans les t
 python3 -m unittest discover -s tests -v
 ```
 
-Les 46 tests vérifient les URL, le protocole HTTP (sur un petit serveur local :
+Les 54 tests vérifient les URL, le protocole HTTP (sur un petit serveur local :
 redirections, chunked, gzip, cookies, POST), l'analyse HTML, la cascade CSS, la
 mise en page (retour à la ligne, centrage, tableaux, listes, formulaires), le
 stockage et les outils HyWebMap (graphe de navigation, typologie des nœuds,

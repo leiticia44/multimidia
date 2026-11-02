@@ -15,7 +15,7 @@ from .chargeur import charger_page, construire_page, format_image, rafraichissem
 from .mise_en_page import (CmdImage, CmdLigne, CmdOvale, CmdRect, CmdTexte, Contexte, LayoutDocument,
                            option_choisie, options_de, valeur_champ)
 from .reseau import ClientHTTP, ErreurReseau, URL, encoder_formulaire, pourcent_decoder
-from .reseau_personnel import proprietes_dom
+from .reseau_personnel import proprietes_dom, texte_visible
 from .stockage import Stockage
 
 NOM = "Navigateur Maison"
@@ -294,6 +294,12 @@ class Onglet:
             # auteur, mots-clés, date de création (balises meta) : utiles pour l'export (§ 2.10)
             reseau.enrichir(adresse, proprietes_dom(resultat.dom))
         reseau.visite(adresse, self.titre, depuis, texte_lien, getattr(resultat, "statut", 200) or 200)
+        if self.url.schema in ("http", "https") and adresse in reseau.noeuds:
+            # le texte de la page servira au recommandeur basé sur le contenu
+            try:
+                hywebmap.base_de(self.nav).enregistrer_contenu(adresse, self.titre, texte_visible(resultat.dom))
+            except Exception:
+                pass
         if self.url.schema in ("http", "https", "file") and not reseau.noeuds.get(adresse, {}).get("auteur"):
             reseau.enrichir(adresse, proprietes_dom(resultat.dom))
             reseau.enregistrer()
@@ -1159,6 +1165,7 @@ class Navigateur:
         menu.add_command(label="Annoter la page / la sélection\tCtrl+N", command=self.annoter)
         menu.add_command(label="Mes annotations", command=lambda: self.nouvel_onglet("about:annotations"))
         menu.add_command(label="Analyse de la page et liens rompus\tCtrl+I", command=self.analyser_page)
+        menu.add_command(label="Pages recommandées pour moi…", command=lambda: hywebmap.FenetreRecommandation(self))
         menu.add_command(label="Dictionnaire personnel…", command=lambda: hywebmap.FenetreDictionnaire(self))
         menu.add_command(label="Exporter mon réseau en site HTML…", command=lambda: hywebmap.exporter_reseau(self))
         menu.add_separator()

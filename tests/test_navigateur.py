@@ -483,7 +483,9 @@ class TestAgentWeb(unittest.TestCase):
             base, ident = self.explorer(dossier, profondeur=2, largeur=10)
             noeuds = {n["url"].replace(self.base_url, ""): n for n in base.noeuds(ident)}
             liaisons = base.liaisons(ident)
+            contenus = base.contenus()
             base.fermer()
+        self.assertIn("feuille", contenus[self.base_url + "/b"][1])   # texte gardé pour la recommandation
         self.assertEqual(noeuds["/"]["type"], "racine")
         self.assertEqual(noeuds["/"]["auteur"], "Saleh")                 # relation Propriété
         self.assertEqual(noeuds["/a"]["type"], "parent")
@@ -677,6 +679,45 @@ class TestRedirections(unittest.TestCase):
         lente = construire_page(None, URL("https://a.fr/"), '<meta http-equiv="refresh" content="30; url=/b">',
                                 lambda: False, ressources=False)
         self.assertIsNone(rafraichissement(lente))
+
+
+class TestRecommandation(unittest.TestCase):
+    """Filtrage basé sur le contenu (article « Systèmes de recommandation », § 3)."""
+
+    def test_mots_et_cosinus(self):
+        from navigateur.recommandation import cosinus, mots
+        self.assertEqual(mots("Le lien hypertexte et la navigation du Web"), ["hypertexte", "navigation", "web"])
+        self.assertAlmostEqual(cosinus({"a": 1.0, "b": 1.0}, {"a": 1.0, "b": 1.0}), 1.0)
+        self.assertEqual(cosinus({"a": 1.0}, {"b": 1.0}), 0.0)
+
+    def test_classement(self):
+        from navigateur.recommandation import profil_usager, recommander
+        with tempfile.TemporaryDirectory() as dossier:
+            reseau = Stockage(dossier).reseau
+            reseau.annoter("https://a.fr/", "Hypertexte", "le lecteur suit des liens hypertextes",
+                           "navigation et désorientation", "hypertexte, navigation")
+            contenus = {
+                "https://a.fr/": ("Hypertexte", "L'hypertexte relie des documents par des liens."),
+                "https://b.fr/": ("Navigation hypertexte", "La navigation hypertexte provoque la désorientation "
+                                                           "du lecteur qui suit les liens."),
+                "https://c.fr/": ("Cuisine", "Recette de la tarte aux pommes et cuisson du gâteau."),
+                "https://d.fr/": ("Liens", "Un document contient des liens vers d'autres documents."),
+            }
+            profil, annotees = profil_usager(reseau, contenus)
+            self.assertEqual(annotees, {"https://a.fr/"})
+            resultats = recommander({u: c for u, c in contenus.items() if u not in annotees}, profil)
+        urls = [r[1] for r in resultats]
+        self.assertEqual(urls[0], "https://b.fr/")                     # la plus proche du profil
+        self.assertNotIn("https://c.fr/", urls)                        # rien en commun : écartée
+        self.assertIn("navigation", resultats[0][3])                   # mots en commun affichés
+
+    def test_texte_des_pages_dans_la_base(self):
+        from navigateur.agent_web import BaseHyWebMap
+        with tempfile.TemporaryDirectory() as dossier:
+            base = BaseHyWebMap(os.path.join(dossier, "h.db"))
+            base.enregistrer_contenu("https://a.fr/", "A", "  du   texte  ")
+            self.assertEqual(base.contenus(), {"https://a.fr/": ("A", "du texte")})
+            base.fermer()
 
 if __name__ == "__main__":
     unittest.main()

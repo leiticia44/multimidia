@@ -25,6 +25,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .agent_web import AgentWeb, BaseHyWebMap
 from .reseau import ClientHTTP, ErreurReseau
+from .recommandation import profil_usager, recommander
 from .reseau_personnel import liens_page, meta_recherche, profil_page, verifier_lien
 
 ROUGE = "#b03a2e"
@@ -553,6 +554,75 @@ class FenetreRecherche:
 
 
 # ---------------------------------------------------------------------------
+# Recommandation par le contenu (article « Systèmes de recommandation », § 3)
+# ---------------------------------------------------------------------------
+
+class FenetreRecommandation:
+    """Pages proches de ce que l'usager a annoté : TF-IDF + similarité cosinus."""
+
+    def __init__(self, nav):
+        self.nav = nav
+        reseau = nav.stockage.reseau
+        contenus = base_de(nav).contenus()
+        profil, annotees = profil_usager(reseau, contenus)
+        candidats = {u: c for u, c in contenus.items() if u not in annotees}
+        self.resultats = recommander(candidats, profil, 15)
+
+        w = self.fenetre = tk.Toplevel(nav.racine)
+        w.title("Pages recommandées — filtrage basé sur le contenu")
+        w.geometry("980x480")
+        cadre = ttk.Frame(w, padding=10)
+        cadre.pack(fill="both", expand=True)
+        bas = ttk.Frame(cadre)
+        bas.pack(side="bottom", fill="x", pady=(6, 0))
+        ttk.Button(bas, text="Ajouter la sélection au réseau (NP)", command=self.ajouter).pack(side="left")
+        ttk.Button(bas, text="Ouvrir", command=self.ouvrir).pack(side="left", padx=6)
+        ttk.Label(cadre, text="Filtrage basé sur le contenu (Kembellec, Chevalier, Dudognon, « Systèmes de "
+                              "recommandation », § 3)", font=(POLICE, 11, "bold")).pack(anchor="w")
+        ttk.Label(cadre, foreground="#555", wraplength=940, justify="left", text=(
+            "Votre profil : %d annotation(s) sur %d page(s). Le navigateur compare votre profil (passages "
+            "surlignés, notes, mots-clés, texte des pages annotées) au texte de %d page(s) connues (visitées ou "
+            "explorées par l'agent Web) : pondération TF-IDF, puis similarité cosinus (1 = identique, 0 = rien "
+            "en commun)." % (len(reseau.annotations), len(annotees), len(candidats)))).pack(anchor="w", pady=(2, 6))
+        zone = ttk.Frame(cadre)
+        zone.pack(fill="both", expand=True)
+        self.table = ttk.Treeview(zone, columns=("rang", "score", "titre", "mots", "url"), show="headings",
+                                  selectmode="extended", height=12)
+        for c, texte, largeur in (("rang", "Rang", 45), ("score", "Similarité", 80), ("titre", "Page", 260),
+                                  ("mots", "Mots en commun (pourquoi ?)", 290), ("url", "Adresse", 280)):
+            self.table.heading(c, text=texte)
+            self.table.column(c, width=largeur, stretch=c in ("titre", "mots", "url"))
+        defil = ttk.Scrollbar(zone, command=self.table.yview)
+        self.table.configure(yscrollcommand=defil.set)
+        defil.pack(side="right", fill="y")
+        self.table.pack(fill="both", expand=True)
+        self.table.bind("<Double-1>", lambda e: self.ouvrir())
+        self.lignes = {}
+        for rang, (score, url, titre, communs) in enumerate(self.resultats, 1):
+            iid = self.table.insert("", "end", values=(rang, "%.3f" % score, titre, ", ".join(communs), url))
+            self.lignes[iid] = (url, titre, communs)
+        if not self.resultats:
+            raison = ("Annotez d'abord une ou deux pages (Ctrl+N) avec des mots-clés : ce sont elles qui "
+                      "forment votre profil." if not profil else
+                      "Aucune page connue ne ressemble encore à votre profil : visitez des pages ou lancez "
+                      "l'agent Web (Ctrl+E) pour en découvrir.")
+            ttk.Label(cadre, text=raison, foreground=ROUGE, wraplength=940).pack(anchor="w", pady=4)
+
+    def ouvrir(self):
+        for iid in self.table.selection()[:1]:
+            self.nav.nouvel_onglet(self.lignes[iid][0])
+
+    def ajouter(self):
+        reseau = self.nav.stockage.reseau
+        ajoutes = 0
+        for iid in self.table.selection():
+            url, titre, communs = self.lignes[iid]
+            ajoutes += reseau.ajouter_proposition(url, titre, communs[0] if communs else "", reseau.racine)
+        self.nav._etat("%d page(s) recommandée(s) ajoutée(s) au réseau (marquées NP)." % ajoutes)
+        self.nav.rafraichir_carte()
+
+
+# ---------------------------------------------------------------------------
 # Nœud libre (§ 2.5, « Déclaration de nœuds et de liens »)
 # ---------------------------------------------------------------------------
 
@@ -642,6 +712,7 @@ class FenetreCarte:
         ttk.Button(barre2, text="Agent Web…", command=nav.ouvrir_agent).pack(side="left")
         ttk.Button(barre2, text="Nœud libre…", command=lambda: FenetreNoeudLibre(nav, apres=self.redessiner)).pack(side="left", padx=4)
         ttk.Button(barre2, text="Propositions (NP)…", command=self.propositions).pack(side="left")
+        ttk.Button(barre2, text="Recommandations…", command=lambda: FenetreRecommandation(nav)).pack(side="left", padx=(4, 0))
         ttk.Button(barre2, text="Dictionnaire…", command=lambda: FenetreDictionnaire(nav)).pack(side="left", padx=4)
         self.auto = tk.BooleanVar(value=self.reseau.parametres.get("surveillance_auto", False))
         ttk.Checkbutton(barre2, text="Surveillance automatique (toutes les %d min)"

@@ -58,7 +58,11 @@ CREATE TABLE IF NOT EXISTS profil (
 CREATE TABLE IF NOT EXISTS propriete (
     noeud INTEGER PRIMARY KEY REFERENCES noeud(id) ON DELETE CASCADE,
     titre TEXT, date_creation TEXT, mots_cles TEXT, auteur TEXT, description TEXT);
+CREATE TABLE IF NOT EXISTS contenu (
+    url TEXT PRIMARY KEY, titre TEXT, texte TEXT, date TEXT);
 """
+# contenu : le texte des pages vues (agent ou visites), pour la recommandation par le contenu
+TAILLE_TEXTE = 20000
 
 
 def maintenant():
@@ -141,6 +145,15 @@ class BaseHyWebMap:
     def enregistrer_propriete(self, noeud, p):
         self._ecrire("INSERT OR REPLACE INTO propriete VALUES (?, ?, ?, ?, ?, ?)",
                      (noeud, p["titre"], p["date_creation"], p["mots_cles"], p["auteur"], p["description"]))
+
+    def enregistrer_contenu(self, url, titre, texte, valider=True):
+        """Garde le texte d'une page (pour le recommandeur basé sur le contenu)."""
+        self._ecrire("INSERT OR REPLACE INTO contenu VALUES (?, ?, ?, ?)",
+                     (url, titre or "", " ".join((texte or "").split())[:TAILLE_TEXTE], maintenant()), valider)
+
+    def contenus(self):
+        """{url: (titre, texte)} de toutes les pages dont le texte est connu."""
+        return {l["url"]: (l["titre"], l["texte"]) for l in self._lire("SELECT url, titre, texte FROM contenu")}
 
     def supprimer_exploration(self, exploration):
         self._ecrire("DELETE FROM exploration WHERE id = ?", (exploration,))
@@ -278,6 +291,7 @@ class AgentWeb:
             car = caracteristiques_dom(dom, finale)
             self.base.enregistrer_profil(ident, car["profil"])
             self.base.enregistrer_propriete(ident, car["proprietes"])
+            self.base.enregistrer_contenu(adresse, car["proprietes"]["titre"], car["texte"], valider=False)
 
             # Phase 1 : tous les liens de la page sont rangés dans la base (un seul enregistrement par page).
             suivis = 0
